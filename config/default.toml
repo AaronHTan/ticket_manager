@@ -1,0 +1,62 @@
+# ticket-handler configuration.
+#
+# Every key can be overridden with an environment variable using the
+# TICKET_HANDLER_ prefix and `__` between levels, for example:
+#   TICKET_HANDLER_SERVER__BIND=0.0.0.0:9000
+#   TICKET_HANDLER_SERVER__API_TOKEN=change-me
+#   TICKET_HANDLER_CONNECTORS__JIRA__ACME__API_TOKEN=...
+# Point TICKET_HANDLER_CONFIG at a different file to replace this one.
+
+[server]
+bind = "127.0.0.1:8080"
+workers = 4
+queue_capacity = 1024
+log_format = "pretty"          # "pretty" | "json"
+# api_token = "change-me"      # when set, /v1 requires `Authorization: Bearer <token>`
+
+[database]
+# "memory" for an ephemeral store, or a SQLite URL.
+url = "sqlite://data/ticket_handler.db"
+
+[retrieval]
+embedding_dim = 512
+top_k = 5
+
+[routing]
+auto_resolve_threshold = 0.90   # similarity needed to reuse an automatable fix
+forward_threshold = 0.65        # similarity needed to count as a known issue
+max_auto_resolve_severity = "medium"
+escalate_severity = "critical"  # at or above this, always go to an expert
+
+[escalation.intermediate]
+name = "L2 Support"
+contact = "l2-support@example.com"
+# external_id = "5b10a2844c20165700ede21g"   # Jira accountId, for assignment
+
+[escalation.default_expert]
+name = "Platform On-Call"
+contact = "platform-oncall@example.com"
+
+[escalation.experts.security]
+name = "Security Team"
+contact = "security@example.com"
+
+[escalation.experts.database]
+name = "Database Team"
+contact = "dba@example.com"
+
+[escalation.experts.billing]
+name = "Billing Ops"
+contact = "billing-ops@example.com"
+
+# One table per Jira site. The table name ("acme") is the connector name used
+# in webhook URLs (/v1/webhooks/jira/acme) and in ExternalRef::system.
+#
+# [connectors.jira.acme]
+# client = "acme"
+# base_url = "https://acme.atlassian.net"
+# email = "triage-bot@acme.com"
+# api_token = ""                          # prefer the environment variable
+# webhook_secret = ""
+# resolve_transition_id = "31"
+# resolution_field = "customfield_10071"

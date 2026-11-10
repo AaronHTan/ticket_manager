@@ -1,0 +1,46 @@
+[
+  {
+    "title": "Password reset email not received",
+    "description": "User requested a password reset but the reset email never arrived. Spam folder checked.",
+    "category": "authentication",
+    "severity": "low",
+    "resolution": {
+      "summary": "Re-send the reset link from the admin console and ask the user to allow-list noreply@example.com.",
+      "automatable": true,
+      "resolved_by": "l2-support"
+    }
+  },
+  {
+    "title": "Invoice shows duplicate charge",
+    "description": "Customer was charged twice for the monthly subscription invoice.",
+    "category": "billing",
+    "severity": "medium",
+    "resolution": {
+      "summary": "Void the duplicate invoice in the billing system and issue a refund to the original payment method.",
+      "automatable": false,
+      "resolved_by": "billing-ops"
+    }
+  },
+  {
+    "title": "Database connection pool exhausted",
+    "description": "API returns 500 errors under load; logs show the database connection pool is exhausted.",
+    "category": "database",
+    "severity": "high",
+    "resolution": {
+      "summary": "Raise max pool size from 20 to 50 and fix the leaked connection in the report export job.",
+      "automatable": false,
+      "resolved_by": "dba"
+    }
+  },
+  {
+    "title": "SSO login redirect loop",
+    "description": "Users signing in with SSO are redirected back to the login page repeatedly.",
+    "category": "authentication",
+    "severity": "medium",
+    "resolution": {
+      "summary": "Clear the stale session cookie; the IdP metadata certificate had rotated and was re-imported.",
+      "automatable": false,
+      "resolved_by": "identity-team"
+    }
+  }
+]

@@ -1,0 +1,17 @@
+[package]
+name = "ticket-api"
+description = "HTTP wire contract shared by the ticket-handler server and its clients."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+ticket-core.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

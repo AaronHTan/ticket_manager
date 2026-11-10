@@ -1,0 +1,22 @@
+[package]
+name = "ticket-cli"
+description = "Command-line client for the ticket-handler service."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "ticket"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ticket-client.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

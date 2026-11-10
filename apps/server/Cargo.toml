@@ -1,0 +1,41 @@
+[package]
+name = "ticket-server"
+description = "Long-running HTTP service that ingests, triages and routes tickets."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "ticket-server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+serde.workspace = true
+ticket-api.workspace = true
+ticket-core.workspace = true
+ticket-engine.workspace = true
+ticket-jira.workspace = true
+ticket-retrieval.workspace = true
+ticket-storage.workspace = true
+figment.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
+hmac.workspace = true
+reqwest.workspace = true
+sha2.workspace = true
+serde_json.workspace = true
+ticket-client.workspace = true
+
+[lints]
+workspace = true

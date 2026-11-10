@@ -1,0 +1,23 @@
+[package]
+name = "ticket-engine"
+description = "Triage engine: classification, retrieval, routing and dispatch."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+serde.workspace = true
+ticket-core.workspace = true
+tokio = { workspace = true, features = ["sync", "rt"] }
+tracing.workspace = true
+
+[dev-dependencies]
+ticket-retrieval.workspace = true
+ticket-storage = { workspace = true, default-features = false }
+tokio.workspace = true
+
+[lints]
+workspace = true
