@@ -10,7 +10,10 @@ mod ticket;
 mod triage;
 
 pub use category::Category;
-pub use code::{CodeContext, RepoId};
+pub use code::{
+    BranchName, ChangeRequest, ChangeRequestRef, CodeContext, CommitId, FixOutcome, RepoId,
+    RepoSpec, Signature, Workspace,
+};
 pub use embedding::{Embedding, top_k};
 pub use knowledge::{HistoricalTicket, KnowledgeEntry, Resolution, SimilarTicket};
 pub use reporter::{Reporter, TicketKind};

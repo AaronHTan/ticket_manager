@@ -19,6 +19,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
 
 * Rust **1.99.1** (pinned in `rust-toolchain.toml`; `rustup` installs it automatically), edition 2024.
 * No external services. SQLite is bundled.
+* `git` on `PATH`, but only when `[repositories]` are configured.
 
 ## Quick start
 
@@ -78,6 +79,14 @@ with the same secret. The Jira issue type, components, reporter, creation
 time and an optional `repository_field` custom field are mapped onto the
 ticket.
 
+## Code changes
+
+Repositories the service may change are listed under `[repositories.<id>]`.
+For each ticket, `FixCoordinator` creates a throwaway git worktree on branch
+`ticket/<id>`, runs a `Fixer`, then commits, pushes and opens a change
+request. Today the fixer is a no-op and the code host only logs. Triage does
+not trigger fixes yet. See *Code changes* in the architecture doc.
+
 ## Development
 
 ```bash
@@ -96,6 +105,7 @@ crates/storage           SQLite + in-memory adapters, shared contract tests
 crates/api               HTTP request/response types (shared by server and SDK)
 crates/client            async Rust SDK for the HTTP API
 crates/connectors/jira   Jira Cloud webhook parser + Tracker implementation
+crates/vcs/git           SourceControl adapter over the git CLI (bare clone + worktrees)
 apps/server              axum service (composition root)
 apps/cli                 `ticket` command-line client
 ```

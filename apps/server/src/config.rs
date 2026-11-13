@@ -7,7 +7,9 @@ use std::path::Path;
 use figment::Figment;
 use figment::providers::{Env, Format, Toml};
 use serde::Deserialize;
-use ticket_engine::{EscalationDirectory, KeywordRule, RoutingPolicy};
+use ticket_core::RepoId;
+use ticket_engine::{EscalationDirectory, KeywordRule, RepositoryConfig, RoutingPolicy};
+use ticket_git::GitConfig;
 use ticket_jira::JiraConfig;
 
 /// Environment variable prefix. `__` separates nesting levels, for example
@@ -37,6 +39,12 @@ pub struct AppConfig {
     /// External system connectors.
     #[serde(default)]
     pub connectors: ConnectorsConfig,
+    /// How the service runs git.
+    #[serde(default)]
+    pub git: GitConfig,
+    /// Repositories the service may change, keyed by repository id.
+    #[serde(default)]
+    pub repositories: BTreeMap<RepoId, RepositoryConfig>,
 }
 
 impl AppConfig {

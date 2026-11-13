@@ -61,3 +61,23 @@ contact = "billing-ops@example.com"
 # resolve_transition_id = "31"
 # resolution_field = "customfield_10071"
 # repository_field = "customfield_10080"   # text or select field naming a [repositories.<id>]
+
+# How the service runs git when proposing code changes. Credentials come from
+# the host's own git setup (SSH agent, credential helpers).
+[git]
+binary = "git"
+cache_dir = "data/repos"            # one bare clone per repository
+workspace_dir = "data/workspaces"   # one throwaway worktree per ticket
+command_timeout_secs = 300
+author_name = "ticket-handler"
+author_email = "ticket-handler@localhost"
+
+# Repositories the service may change. A ticket picks one through
+# code_context.repository, then components, then the client's only repository.
+# Tickets can name a repository id but never a remote.
+#
+# [repositories.web-app]
+# remote = "git@github.com:acme/web-app.git"
+# default_branch = "main"
+# clients = ["acme"]          # empty = any client
+# components = ["frontend", "checkout"]

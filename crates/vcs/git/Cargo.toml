@@ -1,0 +1,21 @@
+[package]
+name = "ticket-git"
+description = "SourceControl adapter that drives the git command-line client."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+serde.workspace = true
+ticket-core.workspace = true
+tokio = { workspace = true, features = ["process", "fs", "sync", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

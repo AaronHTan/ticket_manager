@@ -6,9 +6,10 @@ use std::sync::Arc;
 use anyhow::Context;
 use ticket_core::ports::{KnowledgeBase, TicketRepository};
 use ticket_engine::{
-    Dispatcher, LogNotifier, PipelineDeps, RuleBasedClassifier, TicketRouter, TriagePipeline,
-    WorkerPool,
+    Dispatcher, FixCoordinator, LogCodeHost, LogNotifier, NoopFixer, PipelineDeps,
+    RepositoryDirectory, RuleBasedClassifier, TicketRouter, TriagePipeline, WorkerPool,
 };
+use ticket_git::GitCli;
 use ticket_jira::JiraClient;
 use ticket_retrieval::HashingEmbedder;
 use ticket_storage::{InMemoryStore, SqliteStore};
@@ -66,11 +67,14 @@ pub async fn build(config: &AppConfig) -> anyhow::Result<App> {
         config.server.queue_capacity,
     );
 
+    let fixes = Arc::new(build_fix_coordinator(config).await?);
+
     let state = AppState {
         pipeline: Arc::clone(&pipeline),
         queue,
         jira: Arc::new(config.connectors.jira.clone()),
         api_token: config.server.api_token.as_deref().map(Arc::from),
+        fixes,
     };
 
     let pending = pipeline.recover(RECOVERY_LIMIT).await?;
@@ -85,6 +89,34 @@ pub async fn build(config: &AppConfig) -> anyhow::Result<App> {
     }
 
     Ok(App { state, workers })
+}
+
+/// Wires the code-change path. Git is only checked when repositories are
+/// configured, so the service still runs on hosts without git.
+async fn build_fix_coordinator(config: &AppConfig) -> anyhow::Result<FixCoordinator> {
+    let directory = RepositoryDirectory::new(config.repositories.clone())
+        .context("invalid repository configuration")?;
+    let git = GitCli::new(&config.git).context("invalid git configuration")?;
+    if !directory.is_empty() {
+        let version = git.version().await.with_context(|| {
+            format!(
+                "repositories are configured but `{}` could not be run",
+                config.git.binary.display()
+            )
+        })?;
+        info!(
+            %version,
+            repositories = ?directory.ids().map(|id| id.as_str()).collect::<Vec<_>>(),
+            "git ready"
+        );
+    }
+    Ok(FixCoordinator::new(
+        directory,
+        Arc::new(git),
+        Arc::new(LogCodeHost),
+        Arc::new(NoopFixer),
+        config.git.author(),
+    ))
 }
 
 async fn open_storage(

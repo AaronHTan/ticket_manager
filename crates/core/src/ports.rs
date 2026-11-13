@@ -10,6 +10,9 @@
 //! | [`Classifier`]       | `ticket-engine` (rule-based; LLM later)          |
 //! | [`Tracker`]          | `ticket-jira` (more connectors later)            |
 //! | [`Notifier`]         | `ticket-engine` (log); Slack/email later         |
+//! | [`SourceControl`]    | `ticket-git` (git CLI)                           |
+//! | [`CodeHost`]         | `ticket-engine` (log); GitHub/GitLab later       |
+//! | [`Fixer`]            | `ticket-engine` (no-op); LLM agent later         |
 //!
 //! Traits use `async_trait` so they can be stored as `Arc<dyn Port>` and
 //! picked from configuration at runtime. That is what lets one binary serve
@@ -18,8 +21,9 @@
 use async_trait::async_trait;
 
 use crate::{
-    Assignee, Classification, Embedding, ExternalRef, KnowledgeEntry, Result, RoutingDecision,
-    Severity, SimilarTicket, Ticket, TicketId, TicketStatus, TriageReport,
+    Assignee, BranchName, ChangeRequest, ChangeRequestRef, Classification, CommitId, Embedding,
+    ExternalRef, FixOutcome, KnowledgeEntry, RepoSpec, Result, RoutingDecision, Severity,
+    Signature, SimilarTicket, Ticket, TicketId, TicketStatus, TriageReport, Workspace,
 };
 
 /// Persistence for live tickets and their triage history.
@@ -117,4 +121,56 @@ pub trait Notifier: Send + Sync {
         ticket: &Ticket,
         decision: &RoutingDecision,
     ) -> Result<()>;
+}
+
+/// Checking out, changing and publishing code in a git repository.
+///
+/// Every ticket works in its own [`Workspace`], so several tickets can change
+/// the same repository at once.
+#[async_trait]
+pub trait SourceControl: Send + Sync {
+    /// Brings the local copy of `repo` up to date and creates a private
+    /// working tree for `ticket` on a new `branch` from the repository's
+    /// default branch. Fails with [`Error::Conflict`](crate::Error::Conflict)
+    /// if a workspace or branch for it already exists.
+    async fn prepare(
+        &self,
+        repo: &RepoSpec,
+        ticket: TicketId,
+        branch: &BranchName,
+    ) -> Result<Workspace>;
+
+    /// The uncommitted and committed changes since the base commit,
+    /// including new files, as a unified diff.
+    async fn diff(&self, workspace: &Workspace) -> Result<String>;
+
+    /// Commits every change in the working tree. Returns `None` if there was
+    /// nothing to commit.
+    async fn commit(
+        &self,
+        workspace: &Workspace,
+        message: &str,
+        author: &Signature,
+    ) -> Result<Option<CommitId>>;
+
+    /// Publishes the workspace branch to the remote.
+    async fn push(&self, workspace: &Workspace) -> Result<()>;
+
+    /// Deletes the working tree and its local branch. Pushed work is kept on the remote.
+    async fn release(&self, workspace: &Workspace) -> Result<()>;
+}
+
+/// A code-review host (GitHub, GitLab, Bitbucket, ...).
+#[async_trait]
+pub trait CodeHost: Send + Sync {
+    /// Opens a pull or merge request for an already pushed branch.
+    async fn open_change_request(&self, request: &ChangeRequest) -> Result<ChangeRequestRef>;
+}
+
+/// Something that tries to fix a ticket by editing files in a workspace.
+#[async_trait]
+pub trait Fixer: Send + Sync {
+    /// Edits `workspace` to address `ticket`. Leaving the tree unchanged is a
+    /// valid outcome: it means no fix was found.
+    async fn attempt(&self, ticket: &Ticket, workspace: &Workspace) -> Result<FixOutcome>;
 }

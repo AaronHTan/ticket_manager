@@ -20,6 +20,7 @@ serde.workspace = true
 ticket-api.workspace = true
 ticket-core.workspace = true
 ticket-engine.workspace = true
+ticket-git.workspace = true
 ticket-jira.workspace = true
 ticket-retrieval.workspace = true
 ticket-storage.workspace = true

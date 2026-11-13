@@ -31,26 +31,36 @@ flowchart LR
         P --> RT[TicketRouter - pure]
         P --> D[Dispatcher]
     end
+    subgraph Fix[ticket-engine fix - not yet triggered by triage]
+        FC[FixCoordinator] --> RD[RepositoryDirectory - pure]
+    end
     subgraph Ports[ticket-core ports]
         TR[TicketRepository]
         KB[KnowledgeBase]
         EM[Embedder]
         TK[Tracker]
         NT[Notifier]
+        SC[SourceControl]
+        CH[CodeHost]
+        FX[Fixer]
     end
     P --> TR & KB & EM
     D --> TK & NT
+    FC --> SC & CH & FX
     TR & KB -.impl.- SQL[(SQLite / in-memory)]
     EM -.impl.- HE[HashingEmbedder]
     TK -.impl.- JC[JiraClient]
     NT -.impl.- LN[LogNotifier]
+    SC -.impl.- GC[GitCli]
+    CH -.impl.- LC[LogCodeHost]
+    FX -.impl.- NF[NoopFixer]
 ```
 
 * **`ticket-core`** holds the domain types (`Ticket`, `Severity`,
   `RoutingDecision`, ...) and the **port traits**. It has no I/O and no
   framework dependencies.
 * **`ticket-engine`** holds the application logic, written only against those traits.
-* **Adapters** (`ticket-storage`, `ticket-retrieval`, `ticket-jira`)
+* **Adapters** (`ticket-storage`, `ticket-retrieval`, `ticket-jira`, `ticket-git`)
   implement the ports. Their heavy dependencies (sqlx, reqwest) stay out of
   the engine.
 * **`apps/server`** is the only place that names concrete adapters
@@ -69,6 +79,26 @@ synchronous code with no dynamic dispatch.
 
 `async-trait` is still used for the ports because native `async fn` in
 traits is not yet dyn-compatible on stable Rust.
+
+## The ticket model
+
+A `NewTicket` (inbound) and a `Ticket` (stored) carry:
+
+| Group      | Fields                                                                     |
+|------------|----------------------------------------------------------------------------|
+| Identity   | `id`, `client` (tenant), `external_ref { system, key }`                    |
+| Content    | `title`, `description`, `kind` (bug, incident, feature_request, task, question, other) |
+| Who        | `reporter { name, email, external_id }`. Plain strings are still accepted. |
+| Triage     | `reported_severity` (a hint), `labels`, `components`                       |
+| Code       | `code_context { repository, git_ref, paths, version }`                     |
+| Evidence   | `links [{ url, title }]`, `metadata` (bounded string map)                  |
+| Time       | `reported_at` (upstream), `created_at` / `updated_at` (ours), `status`     |
+
+`NewTicket::validate` bounds every collection and string. It also rejects
+code paths that are absolute, contain `..`, or look like options, and links
+that are not absolute `http(s)` URLs. In SQLite, `components`,
+`code_context`, `links` and `metadata` share one JSON `details` column, so
+new optional fields need no migration.
 
 ## Ticket lifecycle
 
@@ -165,6 +195,42 @@ neighbours by cosine similarity.
   SDK, which shares its request/response types with the server through
   `ticket-api`, so the two cannot drift.
 
+## Code changes (foundation for autonomous fixing)
+
+`FixCoordinator::run(ticket)` follows these steps:
+
+1. **Resolve** a repository with `RepositoryDirectory`, a pure function. It
+   checks the ticket's `code_context.repository` first, then
+   `components`, then the client's only repository. It only considers
+   repositories whose `clients` list allows the ticket's client. Tickets
+   name repository *ids*, never remotes.
+2. **Prepare** a workspace (`SourceControl::prepare`). `GitCli` keeps one
+   bare clone per repository (`cache_dir/<id>.git`) and fetches it, then
+   adds a linked worktree at `workspace_dir/<ticket-id>` on a new branch
+   `ticket/<ticket-id>` from `origin/<default_branch>`. A per-repository
+   lock serialises operations on the shared clone.
+3. **Fix**: `Fixer::attempt` edits files in the worktree. `NoopFixer` is
+   the placeholder.
+4. **Commit** everything (returns `None` if the tree is unchanged), then
+   **push** the branch, then **open a change request** (`CodeHost`).
+   `LogCodeHost` only logs.
+5. **Release**: the worktree and local branch are always removed, even
+   if an earlier step failed. Pushed branches stay on the remote.
+
+`GitCli` hardening:
+
+* Arguments are passed as a vector, never through a shell, with `--`
+  before paths and refspecs. Branch names, repository ids and commit ids
+  are validated types.
+* `core.hooksPath=/dev/null`, `core.fsmonitor=false`, `--no-verify` and
+  `--no-gpg-sign` ensure that repository content cannot run code in the
+  service. A test plants hooks in the clone to prove this.
+* Diffs use `--no-ext-diff --no-textconv`. `GIT_TERMINAL_PROMPT=0` and a
+  closed stdin keep git from waiting for input. Every command has a timeout
+  and is killed when it expires.
+* Startup fails if repositories are configured but `git --version` cannot
+  run. With no repositories configured, git is never invoked.
+
 ## Security baseline
 
 * Optional bearer token on `/v1` (compared in constant time).
@@ -199,3 +265,16 @@ neighbours by cosine similarity.
 7. **Per-client policy**: thresholds, rules and escalation directories keyed by `ClientId`.
 8. **Observability**: OpenTelemetry traces, Prometheus metrics (auto-resolve
    rate, time to triage, escalation mix).
+9. **Autonomous fixing** (next stage, built on `FixCoordinator`):
+   * an LLM-backed `Fixer` that reads the ticket, `code_context.paths` and
+     retrieved precedents, and edits the worktree;
+   * a sandboxed test run in the workspace before commit (a container, with
+     no network and no secrets);
+   * a routing decision such as `AttemptFix` for eligible tickets (by
+     `kind`, severity, and a per-repository opt-in), with escalation as the
+     fallback;
+   * a GitHub/GitLab `CodeHost` that opens real pull requests, with the PR
+     URL posted back through `Tracker::comment`;
+   * a retry policy for branches that were already pushed (currently a second
+     push of `ticket/<id>` from a new base is rejected as non-fast-forward);
+   * persisting `FixResult` next to the `TriageReport`.

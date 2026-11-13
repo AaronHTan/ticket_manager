@@ -1,9 +1,10 @@
 use std::fmt;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, Result};
+use crate::{Error, Result, TicketId};
 
 /// Names a source repository known to the handler, such as `"web-app"`.
 ///
@@ -133,6 +134,209 @@ impl CodeContext {
     }
 }
 
+/// A repository the handler may change: where it lives and which branch to start from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoSpec {
+    /// Configuration key.
+    pub id: RepoId,
+    /// Clone URL or local path, as understood by `git clone`.
+    pub remote: String,
+    /// Branch that work starts from and change requests target.
+    pub default_branch: BranchName,
+}
+
+impl RepoSpec {
+    /// Checks that the remote cannot be read as a command-line option.
+    pub fn validate(&self) -> Result<()> {
+        let remote = self.remote.trim();
+        if remote.is_empty()
+            || remote.starts_with('-')
+            || remote.chars().any(char::is_control)
+            || remote.len() > 2048
+        {
+            return Err(Error::Config(format!(
+                "repository `{}` has an invalid remote",
+                self.id
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// A git branch name that is safe to pass to `git` as an argument.
+///
+/// Stricter than `git check-ref-format`: only `[A-Za-z0-9._/-]`, no empty or
+/// dot-prefixed path components, no `..`, no `.lock` suffix, and never a
+/// leading `-`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct BranchName(String);
+
+impl BranchName {
+    /// Maximum length of a branch name.
+    pub const MAX_LEN: usize = 200;
+
+    /// Validates a branch name.
+    pub fn new(value: impl Into<String>) -> Result<Self> {
+        let value = value.into();
+        let valid_chars = value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'));
+        let valid_components = value
+            .split('/')
+            .all(|part| !part.is_empty() && !part.starts_with('.') && !part.ends_with(".lock"));
+        if value.is_empty()
+            || value.len() > Self::MAX_LEN
+            || !valid_chars
+            || !valid_components
+            || value.starts_with('-')
+            || value.ends_with('.')
+            || value.contains("..")
+        {
+            return Err(Error::Validation(format!("invalid branch name `{value}`")));
+        }
+        Ok(Self(value))
+    }
+
+    /// The working branch for a ticket: `ticket/<ticket-id>`.
+    #[must_use]
+    pub fn for_ticket(id: TicketId) -> Self {
+        Self(format!("ticket/{id}"))
+    }
+
+    /// Returns the name as a string slice.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for BranchName {
+    type Error = Error;
+
+    fn try_from(value: String) -> Result<Self> {
+        Self::new(value)
+    }
+}
+
+impl From<BranchName> for String {
+    fn from(value: BranchName) -> Self {
+        value.0
+    }
+}
+
+impl FromStr for BranchName {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        Self::new(s)
+    }
+}
+
+impl fmt::Display for BranchName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A full or abbreviated commit hash.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct CommitId(String);
+
+impl CommitId {
+    /// Validates a hex commit hash (SHA-1 or SHA-256, possibly abbreviated).
+    pub fn new(value: impl Into<String>) -> Result<Self> {
+        let value = value.into().trim().to_ascii_lowercase();
+        if !(7..=64).contains(&value.len()) || !value.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(Error::Validation(format!("invalid commit id `{value}`")));
+        }
+        Ok(Self(value))
+    }
+
+    /// Returns the hash as a string slice.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for CommitId {
+    type Error = Error;
+
+    fn try_from(value: String) -> Result<Self> {
+        Self::new(value)
+    }
+}
+
+impl From<CommitId> for String {
+    fn from(value: CommitId) -> Self {
+        value.0
+    }
+}
+
+impl fmt::Display for CommitId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A private checkout of a repository on a fresh branch, owned by one ticket.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Workspace {
+    /// Ticket the workspace was created for.
+    pub ticket_id: TicketId,
+    /// Repository checked out.
+    pub repo: RepoId,
+    /// Absolute path of the working tree.
+    pub path: PathBuf,
+    /// Branch checked out in the working tree.
+    pub branch: BranchName,
+    /// Commit the branch started from.
+    pub base_commit: CommitId,
+}
+
+/// Commit author and committer identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Signature {
+    /// Name.
+    pub name: String,
+    /// Email.
+    pub email: String,
+}
+
+/// A proposed change for review on a code host (a pull or merge request).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangeRequest {
+    /// Repository the change is in.
+    pub repo: RepoId,
+    /// Branch holding the change.
+    pub branch: BranchName,
+    /// Branch the change should merge into.
+    pub base: BranchName,
+    /// One-line title.
+    pub title: String,
+    /// Description for reviewers.
+    pub body: String,
+}
+
+/// Where an opened change request can be found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangeRequestRef {
+    /// Host-specific identifier, such as a pull request number.
+    pub id: String,
+    /// Web URL, when the host has one.
+    pub url: Option<String>,
+}
+
+/// What a [`Fixer`](crate::ports::Fixer) did in a workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FixOutcome {
+    /// Explanation of the change (or why none was made), used in the commit
+    /// message and the change request.
+    pub summary: String,
+}
+
 fn validate_relative_path(path: &str) -> Result<()> {
     check_len("path", path, CodeContext::MAX_FIELD_LEN)?;
     let escapes = path.is_empty()
@@ -200,6 +404,56 @@ mod tests {
             ..CodeContext::default()
         };
         assert!(too_many.validate().is_err());
+    }
+
+    #[test]
+    fn branch_names_are_safe_git_arguments() {
+        for ok in ["main", "release/1.2", "ticket/0190-ab_c", "feature/x.y"] {
+            assert!(BranchName::new(ok).is_ok(), "{ok} should be accepted");
+        }
+        for bad in [
+            "",
+            "-delete",
+            "a..b",
+            "a/.hidden",
+            "a//b",
+            "a/",
+            "/a",
+            "x.lock",
+            "x.",
+            "a b",
+            "a~1",
+            "a^",
+            "a:b",
+            "@{u}",
+            "a\\b",
+        ] {
+            assert!(BranchName::new(bad).is_err(), "{bad} should be rejected");
+        }
+        let id = TicketId::new();
+        let branch = BranchName::for_ticket(id);
+        assert_eq!(BranchName::new(branch.as_str()).unwrap(), branch);
+    }
+
+    #[test]
+    fn commit_ids_are_hex() {
+        assert_eq!(CommitId::new("ABCDEF1").unwrap().as_str(), "abcdef1");
+        assert!(CommitId::new("abc").is_err());
+        assert!(CommitId::new("zzzzzzzz").is_err());
+        assert!(CommitId::new("a".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn repo_spec_rejects_option_like_remotes() {
+        let spec = |remote: &str| RepoSpec {
+            id: RepoId::new("web-app").unwrap(),
+            remote: remote.into(),
+            default_branch: BranchName::new("main").unwrap(),
+        };
+        assert!(spec("git@github.com:acme/web-app.git").validate().is_ok());
+        assert!(spec("/srv/git/web-app.git").validate().is_ok());
+        assert!(spec("--upload-pack=touch /tmp/x").validate().is_err());
+        assert!(spec(" ").validate().is_err());
     }
 
     #[test]

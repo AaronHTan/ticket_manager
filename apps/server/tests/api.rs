@@ -10,7 +10,10 @@ use ticket_client::api::{
     TicketId, TicketStatus, TicketView,
 };
 use ticket_client::{Client, ClientError};
-use ticket_core::{Category, ClientId, Reporter, Resolution, RoutingDecision};
+use ticket_core::{
+    Category, ClientId, CodeContext, Link, RepoId, Reporter, Resolution, RoutingDecision,
+    TicketKind,
+};
 use ticket_server::{AppConfig, build, router};
 use tokio::net::TcpListener;
 
@@ -231,4 +234,76 @@ webhook_secret = "hook-secret"
         .await
         .unwrap();
     assert_eq!(unknown.status(), 404);
+}
+
+#[tokio::test]
+async fn ticket_metadata_round_trips_over_http() {
+    let client = Client::new(spawn_server("").await).unwrap();
+    let mut request = submit("Checkout 500 on empty cart", "TypeError in cart.total");
+    request.reporter = Some(Reporter {
+        name: Some("Jane Doe".into()),
+        email: Some("jane@acme.test".into()),
+        external_id: None,
+    });
+    request.kind = TicketKind::Bug;
+    request.components = vec!["checkout".into()];
+    request.code_context = Some(CodeContext {
+        repository: Some(RepoId::new("shop").unwrap()),
+        git_ref: None,
+        paths: vec!["cart.py".into()],
+        version: Some("3.1.0".into()),
+    });
+    request.links = vec![Link::new("https://logs.acme.test/run/7")];
+    request.metadata.insert("browser".into(), "firefox".into());
+
+    let receipt = client.submit_ticket(&request).await.unwrap();
+    let ticket = client.get_ticket(receipt.id).await.unwrap().ticket;
+    assert_eq!(ticket.reporter, request.reporter);
+    assert_eq!(ticket.kind, TicketKind::Bug);
+    assert_eq!(ticket.components, request.components);
+    assert_eq!(ticket.code_context, request.code_context);
+    assert_eq!(ticket.links, request.links);
+    assert_eq!(ticket.metadata, request.metadata);
+
+    // Paths that escape the repository are rejected at the edge.
+    let mut bad = submit("x", "");
+    bad.code_context = Some(CodeContext {
+        paths: vec!["../../etc/passwd".into()],
+        ..CodeContext::default()
+    });
+    let err = client.submit_ticket(&bad).await.unwrap_err();
+    assert!(matches!(err, ClientError::Api { status: 422, .. }));
+}
+
+#[tokio::test]
+async fn configured_repositories_require_a_working_git() {
+    let repos = r#"
+[repositories.shop]
+remote = "git@git.test:acme/shop.git"
+clients = ["acme"]
+components = ["checkout"]
+"#;
+    let broken = AppConfig::from_toml(&format!(
+        "{BASE_CONFIG}\n[git]\nbinary = \"/nonexistent/git\"\n{repos}"
+    ))
+    .unwrap();
+    let err = build(&broken).await.err().expect("startup must fail");
+    assert!(format!("{err:#}").contains("could not be run"), "{err:#}");
+
+    let working = AppConfig::from_toml(&format!("{BASE_CONFIG}\n{repos}")).unwrap();
+    let app = build(&working).await.unwrap();
+    let ids: Vec<_> = app
+        .state
+        .fixes
+        .directory()
+        .ids()
+        .map(|id| id.to_string())
+        .collect();
+    assert_eq!(ids, ["shop"]);
+
+    let invalid = AppConfig::from_toml(&format!(
+        "{BASE_CONFIG}\n[repositories.shop]\nremote = \"--upload-pack=evil\"\n"
+    ))
+    .unwrap();
+    assert!(build(&invalid).await.is_err());
 }
