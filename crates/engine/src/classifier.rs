@@ -336,6 +336,7 @@ mod tests {
                     summary: "fix".into(),
                     automatable: false,
                     resolved_by: None,
+                    patch: None,
                 },
                 updated_at: Utc::now(),
             },

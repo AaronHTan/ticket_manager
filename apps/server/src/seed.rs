@@ -15,7 +15,9 @@ use std::path::Path;
 
 use anyhow::{Context, bail};
 use serde::Deserialize;
-use ticket_api::{HistoricalTicket, NewTicket, SubmitTicketRequest, TicketId, TicketStatus};
+use ticket_api::{
+    FixResult, HistoricalTicket, NewTicket, SubmitTicketRequest, TicketId, TicketStatus,
+};
 use ticket_engine::TriagePipeline;
 
 /// One incoming ticket and the status triage should leave it in.
@@ -28,6 +30,10 @@ pub struct FixtureTicket {
     /// `auto_resolved`, `forwarded` or `escalated`, or `received` to store the
     /// ticket without triaging it (it is then picked up by server recovery).
     pub expect: TicketStatus,
+    /// Expected fix result kind (`proposed`, `no_changes`, `no_repository`),
+    /// when fixes are enabled. Absent means no fix attempt is expected.
+    #[serde(default)]
+    pub expect_fix: Option<String>,
 }
 
 /// What happened to one fixture ticket.
@@ -45,13 +51,28 @@ pub struct SeededTicket {
     pub expected: TicketStatus,
     /// Status the ticket ended in.
     pub actual: TicketStatus,
+    /// Expected fix result kind, if any.
+    pub expected_fix: Option<String>,
+    /// Latest fix attempt result, if any.
+    pub fix: Option<FixResult>,
 }
 
 impl SeededTicket {
-    /// True if triage reached the expected status.
+    /// True if triage reached the expected status and the fix outcome matches.
     #[must_use]
     pub fn matches(&self) -> bool {
         self.expected == self.actual
+            && self.expected_fix.as_deref() == self.fix.as_ref().map(FixResult::kind)
+    }
+
+    /// Short fix description for tables: `proposed ticket/…`, `no_changes`, or `-`.
+    #[must_use]
+    pub fn fix_label(&self) -> String {
+        match &self.fix {
+            Some(FixResult::Proposed { branch, .. }) => format!("proposed {branch}"),
+            Some(other) => other.kind().to_owned(),
+            None => "-".to_owned(),
+        }
     }
 }
 
@@ -134,7 +155,12 @@ pub async fn seed(
     };
 
     let mut seeded = Vec::with_capacity(tickets.len());
-    for FixtureTicket { ticket, expect } in tickets {
+    for FixtureTicket {
+        ticket,
+        expect,
+        expect_fix,
+    } in tickets
+    {
         let key = ticket
             .external_ref
             .as_ref()
@@ -155,6 +181,7 @@ pub async fn seed(
             .ticket_with_triage(id)
             .await?
             .with_context(|| format!("fixture {key} disappeared after ingest"))?;
+        let fix = pipeline.latest_fix(id).await?.map(|attempt| attempt.result);
         seeded.push(SeededTicket {
             key,
             title: ticket.title,
@@ -162,6 +189,8 @@ pub async fn seed(
             created: ingested.created,
             expected: expect,
             actual: ticket.status,
+            expected_fix: expect_fix,
+            fix,
         });
     }
 

@@ -11,11 +11,11 @@ use chrono::Utc;
 use tempfile::TempDir;
 use ticket_core::ports::{CodeHost, Fixer};
 use ticket_core::{
-    ChangeRequest, ChangeRequestRef, ClientId, Error, ExternalRef, FixOutcome, NewTicket, RepoId,
-    Result, Signature, Ticket, Workspace,
+    ChangeRequest, ChangeRequestRef, ClientId, Error, ExternalRef, FixOutcome, FixResult,
+    NewTicket, RepoId, Result, Signature, Ticket, Workspace,
 };
 use ticket_engine::{
-    FixCoordinator, FixResult, LogCodeHost, NoopFixer, RepositoryConfig, RepositoryDirectory,
+    FixCoordinator, LogCodeHost, NoopFixer, RepositoryConfig, RepositoryDirectory,
 };
 use ticket_git::{GitCli, GitConfig};
 

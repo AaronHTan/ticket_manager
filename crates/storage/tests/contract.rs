@@ -3,9 +3,10 @@
 use chrono::{Duration, TimeZone, Utc};
 use ticket_core::ports::{KnowledgeBase, TicketRepository};
 use ticket_core::{
-    Assignee, Category, Classification, ClientId, CodeContext, Embedding, Error, ExternalRef,
-    KnowledgeEntry, Link, NewTicket, RepoId, Reporter, Resolution, RoutingDecision, Severity,
-    SeverityAssessment, Ticket, TicketFilter, TicketId, TicketKind, TicketStatus, TriageReport,
+    Assignee, BranchName, Category, ChangeRequestRef, Classification, ClientId, CodeContext,
+    CommitId, Embedding, Error, ExternalRef, FixAttempt, FixResult, KnowledgeEntry, Link,
+    NewTicket, RepoId, Reporter, Resolution, RoutingDecision, Severity, SeverityAssessment, Ticket,
+    TicketFilter, TicketId, TicketKind, TicketStatus, TriageReport,
 };
 use ticket_storage::{InMemoryStore, SqliteStore};
 
@@ -77,6 +78,8 @@ fn entry(title: &str, automatable: bool) -> KnowledgeEntry {
             summary: format!("fix for {title}"),
             automatable,
             resolved_by: Some("l2".into()),
+            patch: automatable
+                .then(|| "--- a/login.rs\n+++ b/login.rs\n@@ -1 +1 @@\n-old\n+new\n".to_owned()),
         },
         updated_at: Utc::now(),
     }
@@ -218,6 +221,45 @@ async fn ticket_repository_contract(store: &dyn TicketRepository) {
     );
     assert!(matches!(
         store.save_triage(&report(TicketId::new(), "orphan")).await,
+        Err(Error::NotFound(_))
+    ));
+
+    // Fix attempts are append-only and the latest wins.
+    assert_eq!(store.latest_fix_attempt(older.id).await.unwrap(), None);
+    let failed = FixAttempt {
+        ticket_id: older.id,
+        result: FixResult::Failed {
+            error: "push rejected".into(),
+        },
+        attempted_at: Utc::now(),
+    };
+    let proposed = FixAttempt {
+        ticket_id: older.id,
+        result: FixResult::Proposed {
+            repo: RepoId::new("web-app").unwrap(),
+            branch: BranchName::for_ticket(older.id),
+            commit: CommitId::new("0123456789abcdef").unwrap(),
+            change_request: ChangeRequestRef {
+                id: "42".into(),
+                url: Some("https://git.test/pr/42".into()),
+            },
+            summary: "guard empty cart".into(),
+        },
+        attempted_at: Utc::now(),
+    };
+    store.save_fix_attempt(&failed).await.unwrap();
+    store.save_fix_attempt(&proposed).await.unwrap();
+    assert_eq!(
+        store.latest_fix_attempt(older.id).await.unwrap(),
+        Some(proposed)
+    );
+    assert!(matches!(
+        store
+            .save_fix_attempt(&FixAttempt {
+                ticket_id: TicketId::new(),
+                ..failed
+            })
+            .await,
         Err(Error::NotFound(_))
     ));
 }

@@ -11,9 +11,9 @@ use sqlx::sqlite::{
 use sqlx::{Row, Sqlite};
 use ticket_core::ports::{KnowledgeBase, TicketRepository};
 use ticket_core::{
-    ClientId, CodeContext, Embedding, Error, ExternalRef, KnowledgeEntry, Link, Reporter,
-    Resolution, Result, SimilarTicket, Ticket, TicketFilter, TicketId, TicketStatus, TriageReport,
-    top_k,
+    ClientId, CodeContext, Embedding, Error, ExternalRef, FixAttempt, KnowledgeEntry, Link,
+    Reporter, Resolution, Result, SimilarTicket, Ticket, TicketFilter, TicketId, TicketStatus,
+    TriageReport, top_k,
 };
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
@@ -168,6 +168,7 @@ fn knowledge_from_row(row: &SqliteRow) -> Result<(KnowledgeEntry, Embedding)> {
             summary: col(row, "resolution_summary")?,
             automatable: col(row, "automatable")?,
             resolved_by: col(row, "resolved_by")?,
+            patch: col(row, "resolution_patch")?,
         },
         updated_at: col::<DateTime<Utc>>(row, "updated_at")?,
     };
@@ -344,6 +345,33 @@ impl TicketRepository for SqliteStore {
         })
         .transpose()
     }
+
+    async fn save_fix_attempt(&self, attempt: &FixAttempt) -> Result<()> {
+        let json = serde_json::to_string(attempt).map_err(Error::storage)?;
+        sqlx::query("INSERT INTO fix_attempts (ticket_id, attempt, attempted_at) VALUES (?, ?, ?)")
+            .bind(attempt.ticket_id.to_string())
+            .bind(json)
+            .bind(attempt.attempted_at)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| map_write_error(e, || format!("ticket {}", attempt.ticket_id)))?;
+        Ok(())
+    }
+
+    async fn latest_fix_attempt(&self, id: TicketId) -> Result<Option<FixAttempt>> {
+        let row = sqlx::query(
+            "SELECT attempt FROM fix_attempts WHERE ticket_id = ? ORDER BY id DESC LIMIT 1",
+        )
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(Error::storage)?;
+        row.map(|row| {
+            let json: String = col(&row, "attempt")?;
+            serde_json::from_str(&json).map_err(Error::storage)
+        })
+        .transpose()
+    }
 }
 
 #[async_trait]
@@ -351,13 +379,15 @@ impl KnowledgeBase for SqliteStore {
     async fn upsert(&self, entry: &KnowledgeEntry, embedding: &Embedding) -> Result<()> {
         sqlx::query(
             "INSERT INTO knowledge (ticket_id, title, description, category, severity, \
-             resolution_summary, automatable, resolved_by, embedding_dim, embedding, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             resolution_summary, automatable, resolved_by, resolution_patch, embedding_dim, \
+             embedding, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT (ticket_id) DO UPDATE SET \
                title = excluded.title, description = excluded.description, \
                category = excluded.category, severity = excluded.severity, \
                resolution_summary = excluded.resolution_summary, \
                automatable = excluded.automatable, resolved_by = excluded.resolved_by, \
+               resolution_patch = excluded.resolution_patch, \
                embedding_dim = excluded.embedding_dim, embedding = excluded.embedding, \
                updated_at = excluded.updated_at",
         )
@@ -369,6 +399,7 @@ impl KnowledgeBase for SqliteStore {
         .bind(&entry.resolution.summary)
         .bind(entry.resolution.automatable)
         .bind(entry.resolution.resolved_by.as_deref())
+        .bind(entry.resolution.patch.as_deref())
         .bind(i64::try_from(embedding.dim()).map_err(Error::storage)?)
         .bind(embedding.to_le_bytes())
         .bind(entry.updated_at)

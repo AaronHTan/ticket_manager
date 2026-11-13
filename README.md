@@ -106,10 +106,13 @@ shows recovery re-queuing and triaging it.
 ## Code changes
 
 Repositories the service may change are listed under `[repositories.<id>]`.
-For each ticket, `FixCoordinator` creates a throwaway git worktree on branch
-`ticket/<id>`, runs a `Fixer`, then commits, pushes and opens a change
-request. Today the fixer is a no-op and the code host only logs. Triage does
-not trigger fixes yet. See *Code changes* in the architecture doc.
+With `[fixes] enabled = true`, triage hands eligible tickets (bugs and
+incidents that were forwarded or escalated) to `FixCoordinator`. It creates a
+throwaway git worktree on branch `ticket/<id>`, re-applies the patch from the
+most similar resolved ticket, then commits and pushes the branch. The code
+host only logs for now, so review happens on the branch. See
+[docs/DEMO.md](docs/DEMO.md) to watch this end to end, and *Code changes* in
+the architecture doc for details.
 
 ## Development
 

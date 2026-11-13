@@ -22,8 +22,8 @@ use async_trait::async_trait;
 
 use crate::{
     Assignee, BranchName, ChangeRequest, ChangeRequestRef, Classification, CommitId, Embedding,
-    ExternalRef, FixOutcome, KnowledgeEntry, RepoSpec, Result, RoutingDecision, Severity,
-    Signature, SimilarTicket, Ticket, TicketFilter, TicketId, TicketStatus, TriageReport,
+    ExternalRef, FixAttempt, FixOutcome, KnowledgeEntry, RepoSpec, Result, RoutingDecision,
+    Severity, Signature, SimilarTicket, Ticket, TicketFilter, TicketId, TicketStatus, TriageReport,
     Workspace,
 };
 
@@ -63,6 +63,12 @@ pub trait TicketRepository: Send + Sync {
 
     /// Returns the most recent triage report for a ticket.
     async fn latest_triage(&self, id: TicketId) -> Result<Option<TriageReport>>;
+
+    /// Appends a fix attempt.
+    async fn save_fix_attempt(&self, attempt: &FixAttempt) -> Result<()>;
+
+    /// Returns the most recent fix attempt for a ticket.
+    async fn latest_fix_attempt(&self, id: TicketId) -> Result<Option<FixAttempt>>;
 }
 
 /// The retrieval store of resolved tickets: the "R" in RAG.
@@ -156,6 +162,11 @@ pub trait SourceControl: Send + Sync {
         message: &str,
         author: &Signature,
     ) -> Result<Option<CommitId>>;
+
+    /// Applies a unified diff to the working tree. Returns `false`, leaving
+    /// the tree untouched, if it does not apply cleanly. Patches may only
+    /// touch files inside the workspace.
+    async fn apply_patch(&self, workspace: &Workspace, patch: &str) -> Result<bool>;
 
     /// Publishes the workspace branch to the remote.
     async fn push(&self, workspace: &Workspace) -> Result<()>;

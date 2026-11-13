@@ -13,7 +13,7 @@
 //! * [`pipeline`]: orchestrates the steps and the learning feedback loop.
 //! * [`worker`]: a bounded queue and worker pool for asynchronous processing.
 //! * [`fix`]: resolving a ticket to a repository and proposing a code change
-//!   from a throwaway workspace (not yet wired into triage).
+//!   from a throwaway workspace, run after triage for eligible tickets.
 
 pub mod classifier;
 pub mod dispatch;
@@ -25,7 +25,8 @@ pub mod worker;
 pub use classifier::{KeywordRule, RuleBasedClassifier};
 pub use dispatch::{Dispatcher, LogNotifier};
 pub use fix::{
-    FixCoordinator, FixResult, LogCodeHost, NoopFixer, RepositoryConfig, RepositoryDirectory,
+    FixCoordinator, FixPolicy, LogCodeHost, NoopFixer, PatchFixer, RepositoryConfig,
+    RepositoryDirectory,
 };
 pub use pipeline::{Ingested, PipelineDeps, TriagePipeline};
 pub use routing::{EscalationDirectory, RoutingPolicy, TicketRouter};

@@ -8,8 +8,8 @@ use serde::Serialize;
 use ticket_client::Client;
 use ticket_client::api::{
     Category, ClientId, CodeContext, HistoricalTicket, ImportHistoryRequest, Link,
-    ListTicketsQuery, RecordResolutionRequest, RepoId, Reporter, Severity, SubmitTicketRequest,
-    Ticket, TicketId, TicketKind, TicketStatus,
+    ListTicketsQuery, ListedTicket, RecordResolutionRequest, RepoId, Reporter, Severity,
+    SubmitTicketRequest, TicketId, TicketKind, TicketStatus,
 };
 
 #[derive(Debug, Parser)]
@@ -111,6 +111,9 @@ enum Command {
         /// Who resolved it.
         #[arg(long)]
         resolved_by: Option<String>,
+        /// File holding the fix as a unified diff (for example `git diff > fix.patch`).
+        #[arg(long)]
+        patch_file: Option<PathBuf>,
         /// Corrected category.
         #[arg(long)]
         category: Option<Category>,
@@ -185,13 +188,21 @@ async fn main() -> anyhow::Result<()> {
             summary,
             automatable,
             resolved_by,
+            patch_file,
             category,
             severity,
         } => {
+            let patch = patch_file
+                .map(|path| {
+                    std::fs::read_to_string(&path)
+                        .with_context(|| format!("reading {}", path.display()))
+                })
+                .transpose()?;
             let request = RecordResolutionRequest {
                 summary,
                 automatable,
                 resolved_by,
+                patch,
                 category,
                 severity,
             };
@@ -211,18 +222,18 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-fn print_table(tickets: &[Ticket]) {
+fn print_table(tickets: &[ListedTicket]) {
     println!(
-        "{:<36}  {:<13}  {:<15}  {:<8}  title",
-        "id", "status", "kind", "client"
+        "{:<36}  {:<13}  {:<15}  {:<10}  title",
+        "id", "status", "kind", "fix"
     );
-    for t in tickets {
+    for ListedTicket { ticket: t, fix } in tickets {
         println!(
-            "{:<36}  {:<13}  {:<15}  {:<8}  {}",
+            "{:<36}  {:<13}  {:<15}  {:<10}  {}",
             t.id,
             t.status.as_str(),
             t.kind.as_str(),
-            t.client.as_str(),
+            fix.as_deref().unwrap_or("-"),
             t.title
         );
     }

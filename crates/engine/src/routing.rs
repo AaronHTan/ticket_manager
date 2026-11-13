@@ -214,6 +214,7 @@ mod tests {
                     summary: "Resend the reset link".into(),
                     automatable,
                     resolved_by: None,
+                    patch: None,
                 },
                 updated_at: Utc::now(),
             },

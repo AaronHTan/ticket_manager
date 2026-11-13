@@ -98,6 +98,7 @@ async fn harness() -> Harness {
                     summary: "Re-send the reset link from the admin console and allow-list noreply@acme.test.".into(),
                     automatable: true,
                     resolved_by: Some("l2".into()),
+                    patch: None,
                 },
             },
             HistoricalTicket {
@@ -109,6 +110,7 @@ async fn harness() -> Harness {
                     summary: "Void the duplicate invoice in the billing system and issue a refund.".into(),
                     automatable: false,
                     resolved_by: Some("billing".into()),
+                    patch: None,
                 },
             },
         ])
@@ -275,6 +277,7 @@ async fn learned_resolution_makes_the_next_similar_ticket_known() {
                 summary: "Upgrade the VPN client to 5.2 which fixes the keep-alive bug.".into(),
                 automatable: true,
                 resolved_by: Some("network-team".into()),
+                patch: None,
             },
             Some(Category::new("network").unwrap()),
             Some(Severity::Low),

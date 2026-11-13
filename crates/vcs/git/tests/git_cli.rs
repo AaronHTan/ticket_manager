@@ -308,3 +308,38 @@ async fn unreachable_remote_is_an_upstream_error() {
     // A failed clone leaves no cache behind, so a later attempt starts clean.
     assert!(!f.git.mirror_path(&bad.id).exists());
 }
+
+#[tokio::test]
+async fn patches_apply_only_when_clean_and_inside_the_workspace() {
+    let f = fixture();
+    let ticket = TicketId::new();
+    let ws = f
+        .git
+        .prepare(&f.spec, ticket, &BranchName::for_ticket(ticket))
+        .await
+        .unwrap();
+
+    let fix =
+        "--- a/login.rs\n+++ b/login.rs\n@@ -1 +1 @@\n-fn login() {}\n+fn login() { check(); }\n";
+    assert!(f.git.apply_patch(&ws, fix).await.unwrap());
+    assert_eq!(
+        std::fs::read_to_string(ws.path.join("login.rs")).unwrap(),
+        "fn login() { check(); }\n"
+    );
+    // Applying it again no longer matches the file, and changes nothing.
+    assert!(!f.git.apply_patch(&ws, fix).await.unwrap());
+    assert_eq!(
+        std::fs::read_to_string(ws.path.join("login.rs")).unwrap(),
+        "fn login() { check(); }\n"
+    );
+
+    // A patch that escapes the working tree is refused.
+    let escape = "--- /dev/null\n+++ b/../../escaped.txt\n@@ -0,0 +1 @@\n+pwned\n";
+    assert!(!f.git.apply_patch(&ws, escape).await.unwrap());
+    assert!(!ws.path.join("../../escaped.txt").exists());
+    assert!(!f._dir.path().join("escaped.txt").exists());
+
+    // Garbage is not a patch.
+    assert!(!f.git.apply_patch(&ws, "not a diff").await.unwrap());
+    f.git.release(&ws).await.unwrap();
+}

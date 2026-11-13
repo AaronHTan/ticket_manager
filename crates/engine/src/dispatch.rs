@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use ticket_core::ports::{Notifier, Tracker};
-use ticket_core::{Assignee, Result, RoutingDecision, Ticket, TriageReport};
+use ticket_core::{Assignee, FixResult, Result, RoutingDecision, Ticket, TriageReport};
 use tracing::{info, warn};
 
 /// Executes a [`TriageReport`]'s decision.
@@ -64,6 +64,39 @@ impl Dispatcher {
                 .await?;
         }
         Ok(())
+    }
+}
+
+impl Dispatcher {
+    /// Tells the external tracker, if any, about a proposed code change.
+    /// Other fix results are only recorded locally.
+    pub async fn report_fix(&self, ticket: &Ticket, result: &FixResult) -> Result<()> {
+        let FixResult::Proposed {
+            repo,
+            branch,
+            change_request,
+            summary,
+            ..
+        } = result
+        else {
+            return Ok(());
+        };
+        let Some(external) = &ticket.external_ref else {
+            return Ok(());
+        };
+        let Some(tracker) = self.trackers.get(&external.system) else {
+            return Ok(());
+        };
+        let location = change_request
+            .url
+            .clone()
+            .unwrap_or_else(|| format!("branch `{branch}` in `{repo}`"));
+        tracker
+            .comment(
+                external,
+                &format!("[triage] Proposed a code fix for review: {location}\n\n{summary}"),
+            )
+            .await
     }
 }
 

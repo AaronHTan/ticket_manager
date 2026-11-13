@@ -11,8 +11,8 @@ mod triage;
 
 pub use category::Category;
 pub use code::{
-    BranchName, ChangeRequest, ChangeRequestRef, CodeContext, CommitId, FixOutcome, RepoId,
-    RepoSpec, Signature, Workspace,
+    BranchName, ChangeRequest, ChangeRequestRef, CodeContext, CommitId, FixAttempt, FixOutcome,
+    FixResult, RepoId, RepoSpec, Signature, Workspace,
 };
 pub use embedding::{Embedding, top_k};
 pub use knowledge::{HistoricalTicket, KnowledgeEntry, Resolution, SimilarTicket};

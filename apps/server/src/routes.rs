@@ -10,7 +10,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use ticket_api::{
     HealthResponse, ImportHistoryRequest, ImportHistoryResponse, KnowledgeEntry, ListTicketsQuery,
-    RecordResolutionRequest, SubmitTicketRequest, SubmitTicketResponse, TicketId,
+    ListedTicket, RecordResolutionRequest, SubmitTicketRequest, SubmitTicketResponse, TicketId,
     TicketListResponse, TicketView,
 };
 use ticket_core::{Error, Resolution};
@@ -83,7 +83,15 @@ async fn list_tickets(
     State(state): State<AppState>,
     Query(query): Query<ListTicketsQuery>,
 ) -> Result<Json<TicketListResponse>, ApiError> {
-    let tickets = state.pipeline.list_tickets(&query.to_filter()).await?;
+    let mut tickets = Vec::new();
+    for ticket in state.pipeline.list_tickets(&query.to_filter()).await? {
+        let fix = state
+            .pipeline
+            .latest_fix(ticket.id)
+            .await?
+            .map(|attempt| attempt.result.kind().to_owned());
+        tickets.push(ListedTicket { ticket, fix });
+    }
     Ok(Json(TicketListResponse { tickets }))
 }
 
@@ -96,7 +104,12 @@ async fn get_ticket(
         .ticket_with_triage(id)
         .await?
         .ok_or_else(|| Error::NotFound(format!("ticket {id}")))?;
-    Ok(Json(TicketView { ticket, triage }))
+    let fix = state.pipeline.latest_fix(id).await?;
+    Ok(Json(TicketView {
+        ticket,
+        triage,
+        fix,
+    }))
 }
 
 async fn record_resolution(
@@ -108,6 +121,7 @@ async fn record_resolution(
         summary: request.summary,
         automatable: request.automatable,
         resolved_by: request.resolved_by,
+        patch: request.patch,
     };
     let entry = state
         .pipeline

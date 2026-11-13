@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use ticket_core::TicketId;
-use ticket_engine::{FixCoordinator, TriagePipeline, TriageQueue};
+use ticket_engine::{TriagePipeline, TriageQueue};
 use ticket_jira::JiraConfig;
 use tracing::warn;
 
@@ -17,8 +17,6 @@ pub struct AppState {
     pub jira: Arc<BTreeMap<String, JiraConfig>>,
     /// Bearer token protecting the `/v1` API, if configured.
     pub api_token: Option<Arc<str>>,
-    /// Proposes code changes for tickets. Not yet triggered by triage.
-    pub fixes: Arc<FixCoordinator>,
 }
 
 impl AppState {

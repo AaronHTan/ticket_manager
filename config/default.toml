@@ -81,3 +81,14 @@ author_email = "ticket-handler@localhost"
 # default_branch = "main"
 # clients = ["acme"]          # empty = any client
 # components = ["frontend", "checkout"]
+
+# Automatic code fixes after triage. Off by default. When enabled, eligible
+# tickets that resolve to a [repositories.*] entry get a throwaway worktree,
+# the patch from the most similar resolved ticket (Resolution.patch) is
+# re-applied, and the result is committed and pushed to branch ticket/<id>.
+[fixes]
+enabled = false
+kinds = ["bug", "incident"]
+statuses = ["forwarded", "escalated"]   # triage outcomes that may get a fix
+max_severity = "high"                   # leave critical tickets to humans
+min_similarity = 0.65                   # how close a precedent must be

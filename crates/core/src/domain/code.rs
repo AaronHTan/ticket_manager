@@ -1,5 +1,7 @@
 use std::fmt;
 use std::path::PathBuf;
+
+use chrono::{DateTime, Utc};
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
@@ -337,6 +339,64 @@ pub struct FixOutcome {
     pub summary: String,
 }
 
+/// What an attempt to fix a ticket in code achieved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "result", rename_all = "snake_case")]
+pub enum FixResult {
+    /// No configured repository matches the ticket.
+    NoRepository,
+    /// The fixer ran but changed nothing.
+    NoChanges {
+        /// Repository that was examined.
+        repo: RepoId,
+        /// The fixer's explanation.
+        summary: String,
+    },
+    /// A change was committed, pushed and proposed for review.
+    Proposed {
+        /// Repository changed.
+        repo: RepoId,
+        /// Branch holding the change.
+        branch: BranchName,
+        /// The commit.
+        commit: CommitId,
+        /// Where reviewers find it.
+        change_request: ChangeRequestRef,
+        /// The fixer's explanation.
+        summary: String,
+    },
+    /// The attempt failed (git, fixer or code host error).
+    Failed {
+        /// What went wrong.
+        error: String,
+    },
+}
+
+impl FixResult {
+    /// Stable short name: `no_repository`, `no_changes`, `proposed` or `failed`.
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::NoRepository => "no_repository",
+            Self::NoChanges { .. } => "no_changes",
+            Self::Proposed { .. } => "proposed",
+            Self::Failed { .. } => "failed",
+        }
+    }
+}
+
+/// A recorded fix attempt for a ticket.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FixAttempt {
+    /// Ticket the attempt was for.
+    pub ticket_id: TicketId,
+    /// What happened.
+    #[serde(flatten)]
+    pub result: FixResult,
+    /// When the attempt finished.
+    pub attempted_at: DateTime<Utc>,
+}
+
 fn validate_relative_path(path: &str) -> Result<()> {
     check_len("path", path, CodeContext::MAX_FIELD_LEN)?;
     let escapes = path.is_empty()
@@ -454,6 +514,30 @@ mod tests {
         assert!(spec("/srv/git/web-app.git").validate().is_ok());
         assert!(spec("--upload-pack=touch /tmp/x").validate().is_err());
         assert!(spec(" ").validate().is_err());
+    }
+
+    #[test]
+    fn fix_attempts_serialise_with_a_result_tag() {
+        let attempt = FixAttempt {
+            ticket_id: TicketId::new(),
+            result: FixResult::Proposed {
+                repo: RepoId::new("web-app").unwrap(),
+                branch: BranchName::new("ticket/x").unwrap(),
+                commit: CommitId::new("abcdef1").unwrap(),
+                change_request: ChangeRequestRef {
+                    id: "ticket/x".into(),
+                    url: None,
+                },
+                summary: "guarded".into(),
+            },
+            attempted_at: Utc::now(),
+        };
+        let json = serde_json::to_value(&attempt).unwrap();
+        assert_eq!(json["result"], "proposed");
+        assert_eq!(json["branch"], "ticket/x");
+        let back: FixAttempt = serde_json::from_value(json).unwrap();
+        assert_eq!(back, attempt);
+        assert_eq!(FixResult::Failed { error: "x".into() }.kind(), "failed");
     }
 
     #[test]

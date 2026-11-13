@@ -5,19 +5,24 @@
 //!        ─commit─▶ push ─CodeHost─▶ change request ─release─▶ (workspace gone)
 //! ```
 //!
-//! [`FixCoordinator`] owns that sequence. It is not yet called from triage:
-//! the next stage adds a routing decision that hands suitable tickets to it,
-//! together with a [`Fixer`] that actually writes code.
+//! [`FixCoordinator`] owns that sequence. [`TriagePipeline`](crate::TriagePipeline)
+//! calls it after triage for tickets that [`FixPolicy`] deems eligible.
+//!
+//! [`PatchFixer`] is the first real [`Fixer`]: it re-applies the patch
+//! stored with a sufficiently similar resolved ticket. That is "triage by
+//! precedent" carried through to code. An LLM-backed fixer can later
+//! implement the same port.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use ticket_core::ports::{CodeHost, Fixer, SourceControl};
+use ticket_core::ports::{CodeHost, Embedder, Fixer, KnowledgeBase, SourceControl};
 use ticket_core::{
-    BranchName, ChangeRequest, ChangeRequestRef, ClientId, CommitId, Error, FixOutcome, RepoId,
-    RepoSpec, Result, Signature, Ticket, Workspace,
+    BranchName, ChangeRequest, ChangeRequestRef, ClientId, Error, FixOutcome, FixResult, RepoId,
+    RepoSpec, Result, Severity, Signature, Ticket, TicketKind, TicketStatus, TriageReport,
+    Workspace,
 };
 use tracing::{info, warn};
 
@@ -138,33 +143,6 @@ impl RepositoryDirectory {
             _ => None,
         }
     }
-}
-
-/// What [`FixCoordinator::run`] achieved.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FixResult {
-    /// No configured repository matches the ticket.
-    NoRepository,
-    /// The fixer ran but changed nothing.
-    NoChanges {
-        /// Repository that was examined.
-        repo: RepoId,
-        /// The fixer's explanation.
-        summary: String,
-    },
-    /// A change was committed, pushed and proposed for review.
-    Proposed {
-        /// Repository changed.
-        repo: RepoId,
-        /// Branch holding the change.
-        branch: BranchName,
-        /// The commit.
-        commit: CommitId,
-        /// Where reviewers find it.
-        change_request: ChangeRequestRef,
-        /// The fixer's explanation.
-        summary: String,
-    },
 }
 
 /// Runs a [`Fixer`] against a ticket inside a throwaway git workspace.
@@ -307,6 +285,131 @@ fn change_request_body(ticket: &Ticket, summary: &str) -> String {
     body
 }
 
+/// Which triaged tickets are handed to the [`FixCoordinator`], as written under `[fixes]`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FixPolicy {
+    /// Master switch. Off by default: changing code is opt-in.
+    pub enabled: bool,
+    /// Ticket kinds that may be fixed in code.
+    pub kinds: Vec<TicketKind>,
+    /// Triage outcomes that may be followed by a fix. Auto-resolved tickets
+    /// already have a known non-code resolution.
+    pub statuses: Vec<TicketStatus>,
+    /// Tickets assessed above this severity are left to humans.
+    pub max_severity: Severity,
+    /// Minimum similarity to a past ticket before its patch is reused.
+    pub min_similarity: f32,
+}
+
+impl Default for FixPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            kinds: vec![TicketKind::Bug, TicketKind::Incident],
+            statuses: vec![TicketStatus::Forwarded, TicketStatus::Escalated],
+            max_severity: Severity::High,
+            min_similarity: 0.65,
+        }
+    }
+}
+
+impl FixPolicy {
+    /// Rejects an out-of-range similarity threshold.
+    pub fn validate(&self) -> Result<()> {
+        if !(0.0..=1.0).contains(&self.min_similarity) {
+            return Err(Error::Config(
+                "fixes.min_similarity must be within [0, 1]".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Whether `ticket`, triaged as `report`, should get a fix attempt.
+    #[must_use]
+    pub fn eligible(&self, ticket: &Ticket, report: &TriageReport) -> bool {
+        self.enabled
+            && self.kinds.contains(&ticket.kind)
+            && self.statuses.contains(&report.decision.resulting_status())
+            && report.classification.severity.severity <= self.max_severity
+    }
+}
+
+/// A [`Fixer`] that re-applies the patch of the most similar resolved ticket.
+///
+/// Only knowledge entries with a stored patch and a similarity of at least
+/// `min_similarity` are considered, best first. The first patch that applies
+/// cleanly wins. If none does, the tree is left unchanged and the summary
+/// says why.
+pub struct PatchFixer {
+    knowledge: Arc<dyn KnowledgeBase>,
+    embedder: Arc<dyn Embedder>,
+    scm: Arc<dyn SourceControl>,
+    min_similarity: f32,
+}
+
+impl PatchFixer {
+    /// How many neighbours are checked for a usable patch.
+    const CANDIDATES: usize = 5;
+
+    /// Creates a patch fixer.
+    #[must_use]
+    pub fn new(
+        knowledge: Arc<dyn KnowledgeBase>,
+        embedder: Arc<dyn Embedder>,
+        scm: Arc<dyn SourceControl>,
+        min_similarity: f32,
+    ) -> Self {
+        Self {
+            knowledge,
+            embedder,
+            scm,
+            min_similarity,
+        }
+    }
+}
+
+#[async_trait]
+impl Fixer for PatchFixer {
+    async fn attempt(&self, ticket: &Ticket, workspace: &Workspace) -> Result<FixOutcome> {
+        let query = self.embedder.embed(&ticket.searchable_text()).await?;
+        let matches = self.knowledge.search(&query, Self::CANDIDATES).await?;
+        let candidates: Vec<_> = matches
+            .iter()
+            .filter(|m| m.score >= self.min_similarity)
+            .filter_map(|m| m.entry.resolution.patch.as_deref().map(|patch| (m, patch)))
+            .collect();
+        if candidates.is_empty() {
+            return Ok(FixOutcome {
+                summary: format!(
+                    "No resolved ticket with a stored patch scored at least {:.2}.",
+                    self.min_similarity
+                ),
+            });
+        }
+        for (precedent, patch) in &candidates {
+            if self.scm.apply_patch(workspace, patch).await? {
+                return Ok(FixOutcome {
+                    summary: format!(
+                        "Re-applied the fix from resolved ticket \"{}\" ({}, similarity {:.2}).\n\n{}",
+                        precedent.entry.title,
+                        precedent.entry.ticket_id,
+                        precedent.score,
+                        precedent.entry.resolution.summary
+                    ),
+                });
+            }
+        }
+        Ok(FixOutcome {
+            summary: format!(
+                "{} similar resolved ticket(s) had patches, but none applied cleanly to {}.",
+                candidates.len(),
+                workspace.repo
+            ),
+        })
+    }
+}
+
 /// A [`Fixer`] that never changes anything. The default until a real one is configured.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoopFixer;
@@ -350,7 +453,10 @@ impl CodeHost for LogCodeHost {
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
-    use ticket_core::{CodeContext, ExternalRef, NewTicket};
+    use ticket_core::{
+        Assignee, Classification, CodeContext, ExternalRef, NewTicket, RoutingDecision,
+        SeverityAssessment, TicketId,
+    };
 
     use super::*;
 
@@ -467,6 +573,79 @@ mod tests {
             serde_json::from_str(r#"{"remote":"git@x:acme/web.git"}"#).unwrap();
         assert_eq!(config.default_branch.as_str(), "main");
         assert!(config.clients.is_empty());
+    }
+
+    fn report(severity: Severity, decision: RoutingDecision) -> TriageReport {
+        TriageReport {
+            ticket_id: TicketId::new(),
+            classification: Classification {
+                severity: SeverityAssessment {
+                    severity,
+                    confidence: 0.5,
+                    rationale: vec![],
+                },
+                category: None,
+            },
+            matches: vec![],
+            decision,
+            decided_at: Utc::now(),
+        }
+    }
+
+    fn forwarded() -> RoutingDecision {
+        RoutingDecision::Forward {
+            assignee: Assignee {
+                name: "L2".into(),
+                contact: None,
+                external_id: None,
+            },
+            matched: TicketId::new(),
+            score: 0.8,
+            suggested_resolution: "x".into(),
+            reason: "similar".into(),
+        }
+    }
+
+    #[test]
+    fn fix_policy_is_opt_in_and_filters_by_kind_status_and_severity() {
+        let mut bug = ticket("acme", &[], None);
+        bug.kind = TicketKind::Bug;
+        let high_forward = report(Severity::High, forwarded());
+        let enabled = FixPolicy {
+            enabled: true,
+            ..FixPolicy::default()
+        };
+
+        assert!(
+            !FixPolicy::default().eligible(&bug, &high_forward),
+            "off by default"
+        );
+        assert!(enabled.eligible(&bug, &high_forward));
+
+        let mut question = bug.clone();
+        question.kind = TicketKind::Question;
+        assert!(!enabled.eligible(&question, &high_forward));
+
+        assert!(!enabled.eligible(&bug, &report(Severity::Critical, forwarded())));
+
+        let auto = report(
+            Severity::Low,
+            RoutingDecision::AutoResolve {
+                matched: TicketId::new(),
+                score: 0.95,
+                resolution: "x".into(),
+            },
+        );
+        assert!(!enabled.eligible(&bug, &auto));
+
+        assert!(
+            FixPolicy {
+                min_similarity: 1.5,
+                ..FixPolicy::default()
+            }
+            .validate()
+            .is_err()
+        );
     }
 
     #[test]

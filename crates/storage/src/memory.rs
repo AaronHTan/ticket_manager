@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use chrono::Utc;
 use ticket_core::ports::{KnowledgeBase, TicketRepository};
 use ticket_core::{
-    Embedding, Error, ExternalRef, KnowledgeEntry, Result, SimilarTicket, Ticket, TicketFilter,
-    TicketId, TicketStatus, TriageReport, top_k,
+    Embedding, Error, ExternalRef, FixAttempt, KnowledgeEntry, Result, SimilarTicket, Ticket,
+    TicketFilter, TicketId, TicketStatus, TriageReport, top_k,
 };
 
 /// A process-local store implementing both ports.
@@ -22,6 +22,7 @@ pub struct InMemoryStore {
 struct State {
     tickets: HashMap<TicketId, Ticket>,
     triage: HashMap<TicketId, Vec<TriageReport>>,
+    fixes: HashMap<TicketId, Vec<FixAttempt>>,
     knowledge: HashMap<TicketId, (KnowledgeEntry, Embedding)>,
 }
 
@@ -154,6 +155,27 @@ impl TicketRepository for InMemoryStore {
             .triage
             .get(&id)
             .and_then(|reports| reports.last().cloned()))
+    }
+
+    async fn save_fix_attempt(&self, attempt: &FixAttempt) -> Result<()> {
+        let mut state = self.write()?;
+        if !state.tickets.contains_key(&attempt.ticket_id) {
+            return Err(Error::NotFound(format!("ticket {}", attempt.ticket_id)));
+        }
+        state
+            .fixes
+            .entry(attempt.ticket_id)
+            .or_default()
+            .push(attempt.clone());
+        Ok(())
+    }
+
+    async fn latest_fix_attempt(&self, id: TicketId) -> Result<Option<FixAttempt>> {
+        Ok(self
+            .read()?
+            .fixes
+            .get(&id)
+            .and_then(|attempts| attempts.last().cloned()))
     }
 }
 

@@ -8,7 +8,7 @@ use figment::Figment;
 use figment::providers::{Env, Format, Toml};
 use serde::Deserialize;
 use ticket_core::RepoId;
-use ticket_engine::{EscalationDirectory, KeywordRule, RepositoryConfig, RoutingPolicy};
+use ticket_engine::{EscalationDirectory, FixPolicy, KeywordRule, RepositoryConfig, RoutingPolicy};
 use ticket_git::GitConfig;
 use ticket_jira::JiraConfig;
 
@@ -51,6 +51,9 @@ pub struct AppConfig {
     /// Repositories the service may change, keyed by repository id.
     #[serde(default)]
     pub repositories: BTreeMap<RepoId, RepositoryConfig>,
+    /// Which triaged tickets get an automatic fix attempt.
+    #[serde(default)]
+    pub fixes: FixPolicy,
 }
 
 impl AppConfig {

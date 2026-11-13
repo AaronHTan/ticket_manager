@@ -5,12 +5,14 @@ use std::sync::Arc;
 use chrono::Utc;
 use ticket_core::ports::{Classifier, Embedder, KnowledgeBase, TicketRepository};
 use ticket_core::{
-    Category, Error, ExternalRef, HistoricalTicket, KnowledgeEntry, MatchSummary, NewTicket,
-    Resolution, Result, Severity, Ticket, TicketFilter, TicketId, TicketStatus, TriageReport,
+    Category, Error, ExternalRef, FixAttempt, FixResult, HistoricalTicket, KnowledgeEntry,
+    MatchSummary, NewTicket, Resolution, Result, Severity, Ticket, TicketFilter, TicketId,
+    TicketStatus, TriageReport,
 };
 use tracing::{info, instrument, warn};
 
 use crate::dispatch::Dispatcher;
+use crate::fix::{FixCoordinator, FixPolicy};
 use crate::routing::TicketRouter;
 
 /// The adapters the pipeline depends on, injected at start-up.
@@ -41,6 +43,7 @@ pub struct TriagePipeline {
     router: TicketRouter,
     dispatcher: Dispatcher,
     top_k: usize,
+    fixes: Option<(Arc<FixCoordinator>, FixPolicy)>,
 }
 
 impl TriagePipeline {
@@ -55,7 +58,23 @@ impl TriagePipeline {
             router,
             dispatcher,
             top_k: Self::DEFAULT_TOP_K,
+            fixes: None,
         }
+    }
+
+    /// After triage, hands tickets that `policy` deems eligible to `coordinator`.
+    #[must_use]
+    pub fn with_fixes(mut self, coordinator: Arc<FixCoordinator>, policy: FixPolicy) -> Self {
+        self.fixes = Some((coordinator, policy));
+        self
+    }
+
+    /// The fix coordinator, if fixes are configured.
+    #[must_use]
+    pub fn fix_coordinator(&self) -> Option<&FixCoordinator> {
+        self.fixes
+            .as_ref()
+            .map(|(coordinator, _)| coordinator.as_ref())
     }
 
     /// Sets how many similar tickets to retrieve.
@@ -150,6 +169,7 @@ impl TriagePipeline {
                 let status = report.decision.resulting_status();
                 tickets.set_status(id, status).await?;
                 info!(%status, severity = %report.classification.severity.severity, "ticket triaged");
+                self.attempt_fix(&ticket, &report).await;
                 Ok(report)
             }
             Err(error) => {
@@ -157,6 +177,40 @@ impl TriagePipeline {
                 tickets.set_status(id, TicketStatus::Failed).await?;
                 Err(error)
             }
+        }
+    }
+
+    /// Runs the fix coordinator for an eligible ticket and records the attempt.
+    ///
+    /// Never fails triage: the ticket keeps its triage status whatever
+    /// happens here, and errors are recorded as [`FixResult::Failed`].
+    async fn attempt_fix(&self, ticket: &Ticket, report: &TriageReport) {
+        let Some((coordinator, policy)) = &self.fixes else {
+            return;
+        };
+        if !policy.eligible(ticket, report) {
+            return;
+        }
+        let result = match coordinator.run(ticket).await {
+            Ok(result) => result,
+            Err(error) => {
+                warn!(%error, "fix attempt failed");
+                FixResult::Failed {
+                    error: error.to_string(),
+                }
+            }
+        };
+        info!(result = result.kind(), "fix attempted");
+        if let Err(error) = self.dispatcher.report_fix(ticket, &result).await {
+            warn!(%error, "could not report fix to tracker");
+        }
+        let attempt = FixAttempt {
+            ticket_id: ticket.id,
+            result,
+            attempted_at: Utc::now(),
+        };
+        if let Err(error) = self.deps.tickets.save_fix_attempt(&attempt).await {
+            warn!(%error, "could not record fix attempt");
         }
     }
 
@@ -187,11 +241,7 @@ impl TriagePipeline {
         category: Option<Category>,
         severity: Option<Severity>,
     ) -> Result<KnowledgeEntry> {
-        if resolution.summary.trim().is_empty() {
-            return Err(Error::Validation(
-                "resolution summary must not be empty".into(),
-            ));
-        }
+        resolution.validate()?;
         let ticket = self
             .deps
             .tickets
@@ -247,6 +297,7 @@ impl TriagePipeline {
                         summary,
                         automatable: false,
                         resolved_by,
+                        patch: None,
                     };
                     self.record_resolution(ticket.id, resolution, None, None)
                         .await
@@ -313,6 +364,11 @@ impl TriagePipeline {
         };
         let triage = self.deps.tickets.latest_triage(id).await?;
         Ok(Some((ticket, triage)))
+    }
+
+    /// The latest fix attempt for a ticket, if any.
+    pub async fn latest_fix(&self, id: TicketId) -> Result<Option<FixAttempt>> {
+        self.deps.tickets.latest_fix_attempt(id).await
     }
 
     /// Lists stored tickets, newest first.

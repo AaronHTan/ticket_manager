@@ -41,6 +41,7 @@ use ticket_core::ports::SourceControl;
 use ticket_core::{
     BranchName, CommitId, Error, RepoId, RepoSpec, Result, Signature, TicketId, Workspace,
 };
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 use tracing::{debug, info, warn};
@@ -168,6 +169,35 @@ impl GitCli {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         cmd
+    }
+
+    /// Runs a git command with `input` on stdin and returns its raw output.
+    async fn output_with_input(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        input: &str,
+        what: &str,
+    ) -> Result<Output> {
+        let mut cmd = self.command(cwd);
+        cmd.args(args).stdin(Stdio::piped());
+        debug!(cwd = %cwd.display(), what, "git");
+        let run = async {
+            let mut child = cmd.spawn()?;
+            let mut stdin = child.stdin.take().expect("stdin is piped");
+            stdin.write_all(input.as_bytes()).await?;
+            // Closing stdin tells git the input is complete.
+            drop(stdin);
+            child.wait_with_output().await
+        };
+        match tokio::time::timeout(self.timeout, run).await {
+            Ok(Ok(output)) => Ok(output),
+            Ok(Err(e)) => Err(Error::upstream(SYSTEM, format!("{what}: {e}"))),
+            Err(_) => Err(Error::upstream(
+                SYSTEM,
+                format!("{what}: timed out after {}s", self.timeout.as_secs()),
+            )),
+        }
     }
 
     /// Runs a git command and returns its raw output, whatever the exit status.
@@ -435,6 +465,39 @@ impl SourceControl for GitCli {
         )
         .await?;
         self.head(&workspace.path).await.map(Some)
+    }
+
+    async fn apply_patch(&self, workspace: &Workspace, patch: &str) -> Result<bool> {
+        // `git apply` refuses paths outside the working tree unless
+        // `--unsafe-paths` is given, which it never is here.
+        let check = self
+            .output_with_input(
+                &workspace.path,
+                &["apply", "--check", "--whitespace=nowarn", "-"],
+                patch,
+                "apply --check",
+            )
+            .await?;
+        if !check.status.success() {
+            debug!(
+                path = %workspace.path.display(),
+                stderr = %String::from_utf8_lossy(&check.stderr).trim(),
+                "patch does not apply"
+            );
+            return Ok(false);
+        }
+        let applied = self
+            .output_with_input(
+                &workspace.path,
+                &["apply", "--whitespace=nowarn", "-"],
+                patch,
+                "apply",
+            )
+            .await?;
+        if !applied.status.success() {
+            return Err(failure("apply", &applied));
+        }
+        Ok(true)
     }
 
     async fn push(&self, workspace: &Workspace) -> Result<()> {

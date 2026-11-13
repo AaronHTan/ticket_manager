@@ -31,7 +31,7 @@ flowchart LR
         P --> RT[TicketRouter - pure]
         P --> D[Dispatcher]
     end
-    subgraph Fix[ticket-engine fix - not yet triggered by triage]
+    subgraph Fix[ticket-engine fix - after triage, when eligible]
         FC[FixCoordinator] --> RD[RepositoryDirectory - pure]
     end
     subgraph Ports[ticket-core ports]
@@ -53,7 +53,8 @@ flowchart LR
     NT -.impl.- LN[LogNotifier]
     SC -.impl.- GC[GitCli]
     CH -.impl.- LC[LogCodeHost]
-    FX -.impl.- NF[NoopFixer]
+    FX -.impl.- NF[PatchFixer / NoopFixer]
+    P --> FC
 ```
 
 * **`ticket-core`** holds the domain types (`Ticket`, `Severity`,
@@ -209,8 +210,11 @@ neighbours by cosine similarity.
    adds a linked worktree at `workspace_dir/<ticket-id>` on a new branch
    `ticket/<ticket-id>` from `origin/<default_branch>`. A per-repository
    lock serialises operations on the shared clone.
-3. **Fix**: `Fixer::attempt` edits files in the worktree. `NoopFixer` is
-   the placeholder.
+3. **Fix**: `Fixer::attempt` edits files in the worktree. `PatchFixer`
+   searches the knowledge base for resolved tickets at or above
+   `[fixes].min_similarity` that stored a `patch`, best match first. It
+   re-applies the first patch that `git apply --check` accepts. `NoopFixer`
+   is used when `[fixes]` is disabled.
 4. **Commit** everything (returns `None` if the tree is unchanged), then
    **push** the branch, then **open a change request** (`CodeHost`).
    `LogCodeHost` only logs.
@@ -230,6 +234,23 @@ neighbours by cosine similarity.
   and is killed when it expires.
 * Startup fails if repositories are configured but `git --version` cannot
   run. With no repositories configured, git is never invoked.
+
+### When fixes run
+
+`TriagePipeline::process` calls `FixCoordinator::run` after the triage status
+is saved, inline in the same worker, when `FixPolicy::eligible` holds:
+
+* `[fixes].enabled` is set;
+* the ticket `kind` is listed (default: bug, incident);
+* the triage outcome is listed (default: forwarded, escalated);
+* the assessed severity is at most `max_severity` (default: high).
+
+Every attempt is stored as a `FixAttempt` (`fix_attempts` table) and shown as
+`fix` on `GET /v1/tickets/{id}` and in `ticket list`. A failure is recorded as
+`failed` and never changes the triage outcome. A `proposed` fix is commented
+back to the ticket's tracker. Patches enter the knowledge base through
+history import (`resolution.patch`) or `POST /v1/tickets/{id}/resolution`
+(`patch`, or `ticket resolve --patch-file`).
 
 ## Security baseline
 
@@ -265,16 +286,16 @@ neighbours by cosine similarity.
 7. **Per-client policy**: thresholds, rules and escalation directories keyed by `ClientId`.
 8. **Observability**: OpenTelemetry traces, Prometheus metrics (auto-resolve
    rate, time to triage, escalation mix).
-9. **Autonomous fixing** (next stage, built on `FixCoordinator`):
+9. **Autonomous fixing** (patch-from-precedent is in place; next):
    * an LLM-backed `Fixer` that reads the ticket, `code_context.paths` and
-     retrieved precedents, and edits the worktree;
+     retrieved precedents, and edits the worktree, for tickets with no
+     reusable patch;
+   * a separate fix queue, so slow fixers never delay triage;
    * a sandboxed test run in the workspace before commit (a container, with
      no network and no secrets);
-   * a routing decision such as `AttemptFix` for eligible tickets (by
-     `kind`, severity, and a per-repository opt-in), with escalation as the
-     fallback;
+   * a per-repository opt-in on top of the global `[fixes]` policy;
    * a GitHub/GitLab `CodeHost` that opens real pull requests, with the PR
      URL posted back through `Tracker::comment`;
    * a retry policy for branches that were already pushed (currently a second
      push of `ticket/<id>` from a new base is rejected as non-fast-forward);
-   * persisting `FixResult` next to the `TriageReport`.
+

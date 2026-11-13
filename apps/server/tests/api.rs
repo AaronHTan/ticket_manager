@@ -80,6 +80,7 @@ async fn standalone_client_flow_import_submit_triage_learn() {
                     summary: "Re-send the reset link from the admin console.".into(),
                     automatable: true,
                     resolved_by: None,
+                    patch: None,
                 },
             }],
         })
@@ -127,6 +128,7 @@ async fn standalone_client_flow_import_submit_triage_learn() {
                 summary: "Rotated admin credentials and enforced MFA.".into(),
                 automatable: false,
                 resolved_by: Some("security".into()),
+                patch: None,
                 category: None,
                 severity: None,
             },
@@ -294,7 +296,9 @@ components = ["checkout"]
     let app = build(&working).await.unwrap();
     let ids: Vec<_> = app
         .state
-        .fixes
+        .pipeline
+        .fix_coordinator()
+        .unwrap()
         .directory()
         .ids()
         .map(|id| id.to_string())
@@ -326,7 +330,7 @@ async fn tickets_can_be_listed_and_filtered() {
         .await
         .unwrap();
     assert_eq!(
-        all.tickets.iter().map(|t| t.id).collect::<Vec<_>>(),
+        all.tickets.iter().map(|t| t.ticket.id).collect::<Vec<_>>(),
         vec![second.id, first.id],
         "newest first"
     );
@@ -337,7 +341,8 @@ async fn tickets_can_be_listed_and_filtered() {
     };
     let listed = client.list_tickets(&acme).await.unwrap();
     assert_eq!(listed.tickets.len(), 1);
-    assert_eq!(listed.tickets[0].id, first.id);
+    assert_eq!(listed.tickets[0].ticket.id, first.id);
+    assert_eq!(listed.tickets[0].fix, None);
 
     let escalated = ListTicketsQuery {
         status: Some(TicketStatus::Escalated),
@@ -350,6 +355,6 @@ async fn tickets_can_be_listed_and_filtered() {
         listed
             .tickets
             .iter()
-            .all(|t| t.status == TicketStatus::Escalated)
+            .all(|t| t.ticket.status == TicketStatus::Escalated)
     );
 }

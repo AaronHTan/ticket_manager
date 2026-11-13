@@ -35,7 +35,7 @@ struct Args {
     /// Delete the SQLite database first, so seeding starts from nothing.
     #[arg(long)]
     reset: bool,
-    /// Allow --reset on a database whose file name does not contain "test".
+    /// Allow --reset on a database whose file name contains neither "test" nor "demo".
     #[arg(long, requires = "reset")]
     force: bool,
 }
@@ -73,17 +73,29 @@ async fn main() -> anyhow::Result<ExitCode> {
     }
     println!("knowledge entries: {}\n", report.knowledge_entries);
     println!(
-        "{:<7} {:<8} {:<14} {:<14} {:<6} title",
-        "key", "", "expected", "actual", ""
+        "{:<7} {:<8} {:<14} {:<14} {:<6} {:<26} title",
+        "key", "", "expected", "actual", "", "fix"
     );
     for t in &report.tickets {
+        // Branch names are long; the id is shown in full by `ticket get`.
+        let mut fix = t.fix_label();
+        if fix.len() > 26 {
+            fix.truncate(23);
+            fix.push_str("...");
+        }
+        if let Some(expected) = &t.expected_fix
+            && Some(expected.as_str()) != t.fix.as_ref().map(|f| f.kind())
+        {
+            fix = format!("{fix} (expected {expected})");
+        }
         println!(
-            "{:<7} {:<8} {:<14} {:<14} {:<6} {}",
+            "{:<7} {:<8} {:<14} {:<14} {:<6} {:<26} {}",
             t.key,
             if t.created { "new" } else { "existing" },
             t.expected.as_str(),
             t.actual.as_str(),
             if t.matches() { "ok" } else { "FAIL" },
+            fix,
             t.title
         );
     }
@@ -111,10 +123,11 @@ fn reset(url: &str, force: bool) -> anyhow::Result<()> {
     let is_test = path
         .file_name()
         .and_then(|n| n.to_str())
-        .is_some_and(|n| n.contains("test"));
+        .is_some_and(|n| n.contains("test") || n.contains("demo"));
     if !is_test && !force {
         bail!(
-            "refusing to reset `{}`: its name does not contain \"test\" (pass --force to override)",
+            "refusing to reset `{}`: its name contains neither \"test\" nor \"demo\" \
+             (pass --force to override)",
             path.display()
         );
     }

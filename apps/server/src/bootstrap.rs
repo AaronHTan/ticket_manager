@@ -4,9 +4,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Context;
-use ticket_core::ports::{KnowledgeBase, TicketRepository};
+use ticket_core::ports::{Fixer, KnowledgeBase, TicketRepository};
 use ticket_engine::{
-    Dispatcher, FixCoordinator, LogCodeHost, LogNotifier, NoopFixer, PipelineDeps,
+    Dispatcher, FixCoordinator, LogCodeHost, LogNotifier, NoopFixer, PatchFixer, PipelineDeps,
     RepositoryDirectory, RuleBasedClassifier, TicketRouter, TriagePipeline, WorkerPool,
 };
 use ticket_git::GitCli;
@@ -39,14 +39,11 @@ pub async fn build(config: &AppConfig) -> anyhow::Result<App> {
         config.server.queue_capacity,
     );
 
-    let fixes = Arc::new(build_fix_coordinator(config).await?);
-
     let state = AppState {
         pipeline: Arc::clone(&pipeline),
         queue,
         jira: Arc::new(config.connectors.jira.clone()),
         api_token: config.server.api_token.as_deref().map(Arc::from),
-        fixes,
     };
 
     let pending = pipeline.recover(RECOVERY_LIMIT).await?;
@@ -63,8 +60,9 @@ pub async fn build(config: &AppConfig) -> anyhow::Result<App> {
     Ok(App { state, workers })
 }
 
-/// Opens storage and wires the triage pipeline, without starting workers,
-/// recovery or HTTP. Used by [`build`] and by offline tools such as `ticket-seed`.
+/// Opens storage and wires the triage pipeline, including the fix path,
+/// without starting workers, recovery or HTTP. Used by [`build`] and by
+/// offline tools such as `ticket-seed`.
 pub async fn build_pipeline(config: &AppConfig) -> anyhow::Result<Arc<TriagePipeline>> {
     let (tickets, knowledge) = open_storage(&config.database.url).await?;
 
@@ -87,6 +85,8 @@ pub async fn build_pipeline(config: &AppConfig) -> anyhow::Result<Arc<TriagePipe
     }
     info!(trackers = ?dispatcher.tracker_names().collect::<Vec<_>>(), "trackers registered");
 
+    let fixes = build_fix_coordinator(config, &knowledge, &embedder).await?;
+
     let deps = PipelineDeps {
         tickets,
         knowledge,
@@ -94,17 +94,31 @@ pub async fn build_pipeline(config: &AppConfig) -> anyhow::Result<Arc<TriagePipe
         classifier,
     };
     Ok(Arc::new(
-        TriagePipeline::new(deps, router, dispatcher).with_top_k(config.retrieval.top_k),
+        TriagePipeline::new(deps, router, dispatcher)
+            .with_top_k(config.retrieval.top_k)
+            .with_fixes(Arc::new(fixes), config.fixes.clone()),
     ))
 }
 
 /// Wires the code-change path. Git is only checked when repositories are
 /// configured, so the service still runs on hosts without git.
-async fn build_fix_coordinator(config: &AppConfig) -> anyhow::Result<FixCoordinator> {
+async fn build_fix_coordinator(
+    config: &AppConfig,
+    knowledge: &Arc<dyn KnowledgeBase>,
+    embedder: &Arc<HashingEmbedder>,
+) -> anyhow::Result<FixCoordinator> {
+    config
+        .fixes
+        .validate()
+        .context("invalid [fixes] configuration")?;
     let directory = RepositoryDirectory::new(config.repositories.clone())
         .context("invalid repository configuration")?;
-    let git = GitCli::new(&config.git).context("invalid git configuration")?;
-    if !directory.is_empty() {
+    let git = Arc::new(GitCli::new(&config.git).context("invalid git configuration")?);
+    if directory.is_empty() {
+        if config.fixes.enabled {
+            warn!("[fixes] is enabled but no [repositories] are configured; nothing can be fixed");
+        }
+    } else {
         let version = git.version().await.with_context(|| {
             format!(
                 "repositories are configured but `{}` could not be run",
@@ -114,14 +128,25 @@ async fn build_fix_coordinator(config: &AppConfig) -> anyhow::Result<FixCoordina
         info!(
             %version,
             repositories = ?directory.ids().map(|id| id.as_str()).collect::<Vec<_>>(),
+            fixes_enabled = config.fixes.enabled,
             "git ready"
         );
     }
+    let fixer: Arc<dyn Fixer> = if config.fixes.enabled {
+        Arc::new(PatchFixer::new(
+            Arc::clone(knowledge),
+            embedder.clone(),
+            git.clone(),
+            config.fixes.min_similarity,
+        ))
+    } else {
+        Arc::new(NoopFixer)
+    };
     Ok(FixCoordinator::new(
         directory,
-        Arc::new(git),
+        git,
         Arc::new(LogCodeHost),
-        Arc::new(NoopFixer),
+        fixer,
         config.git.author(),
     ))
 }

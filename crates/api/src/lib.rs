@@ -10,9 +10,9 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 pub use ticket_core::{
-    Category, ClientId, CodeContext, ExternalRef, HistoricalTicket, KnowledgeEntry, Link,
-    NewTicket, RepoId, Reporter, Severity, Ticket, TicketFilter, TicketId, TicketKind,
-    TicketStatus, TriageReport,
+    Category, ClientId, CodeContext, ExternalRef, FixAttempt, FixResult, HistoricalTicket,
+    KnowledgeEntry, Link, NewTicket, RepoId, Reporter, Severity, Ticket, TicketFilter, TicketId,
+    TicketKind, TicketStatus, TriageReport,
 };
 
 /// Route paths, relative to the server root.
@@ -198,7 +198,18 @@ impl ListTicketsQuery {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TicketListResponse {
     /// Matching tickets, newest first.
-    pub tickets: Vec<Ticket>,
+    pub tickets: Vec<ListedTicket>,
+}
+
+/// One entry of [`TicketListResponse`]: the ticket plus a short fix status.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ListedTicket {
+    /// The ticket.
+    #[serde(flatten)]
+    pub ticket: Ticket,
+    /// Kind of the latest fix attempt (`proposed`, `no_changes`, ...), if any.
+    #[serde(default)]
+    pub fix: Option<String>,
 }
 
 /// Response to `GET /v1/tickets/{id}`.
@@ -209,6 +220,9 @@ pub struct TicketView {
     pub ticket: Ticket,
     /// Latest triage report, once triage has run.
     pub triage: Option<TriageReport>,
+    /// Latest automatic fix attempt, if one was made.
+    #[serde(default)]
+    pub fix: Option<FixAttempt>,
 }
 
 /// Body of `POST /v1/tickets/{id}/resolution`.
@@ -223,6 +237,10 @@ pub struct RecordResolutionRequest {
     /// Who resolved it.
     #[serde(default)]
     pub resolved_by: Option<String>,
+    /// The code change that fixed it, as a unified diff. Lets similar future
+    /// tickets be fixed automatically when `[fixes]` is enabled.
+    #[serde(default)]
+    pub patch: Option<String>,
     /// Corrected category.
     #[serde(default)]
     pub category: Option<Category>,
