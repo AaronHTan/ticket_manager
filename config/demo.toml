@@ -10,6 +10,9 @@ log_format = "pretty"
 # Step-by-step: new tickets wait in `received` until you run triage, and
 # fixes run only when you ask (UI buttons, or `ticket triage` / `ticket fix`).
 auto_triage = false
+# Lets the UI switch between step-by-step and automatic mode (PUT /v1/settings).
+# Demo only: production servers keep the default (false).
+allow_mode_switch = true
 
 [database]
 url = "sqlite://data/demo/demo.db"

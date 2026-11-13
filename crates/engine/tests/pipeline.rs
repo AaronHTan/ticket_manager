@@ -220,6 +220,11 @@ async fn novel_security_issue_is_escalated_to_security_expert() {
     );
     // Standalone ticket: nothing is sent to any tracker.
     assert!(h.tracker.calls().is_empty());
+
+    // Escalations carry a preliminary resolution for the expert.
+    let draft = report.draft.expect("escalated tickets get a draft");
+    assert!(draft.first_steps[0].starts_with("Treat this as an incident"));
+    assert!(draft.text.contains("Routed to Security"));
 }
 
 #[tokio::test]

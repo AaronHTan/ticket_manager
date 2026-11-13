@@ -63,6 +63,16 @@ fn report(ticket_id: TicketId, reason: &str) -> TriageReport {
             },
             reason: reason.into(),
         },
+        draft: Some(ticket_core::DraftResolution {
+            text: "Preliminary assessment".into(),
+            first_steps: vec!["Check replication lag.".into()],
+            precedents: vec![ticket_core::Precedent {
+                ticket_id: TicketId::new(),
+                title: "Replication lag".into(),
+                score: 0.4,
+                resolution: "Moved the analytics query.".into(),
+            }],
+        }),
         decided_at: Utc::now(),
     }
 }

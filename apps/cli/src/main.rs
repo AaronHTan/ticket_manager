@@ -183,6 +183,7 @@ async fn main() -> anyhow::Result<()> {
                 status,
                 client: client_id,
                 limit,
+                with_triage: None,
             };
             let response = client.list_tickets(&query).await?;
             if json {
@@ -239,7 +240,7 @@ fn print_table(tickets: &[ListedTicket]) {
         "{:<36}  {:<13}  {:<15}  {:<10}  title",
         "id", "status", "kind", "fix"
     );
-    for ListedTicket { ticket: t, fix } in tickets {
+    for ListedTicket { ticket: t, fix, .. } in tickets {
         println!(
             "{:<36}  {:<13}  {:<15}  {:<10}  {}",
             t.id,

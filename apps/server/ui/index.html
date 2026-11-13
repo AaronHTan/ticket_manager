@@ -3,11 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Ticket Handler Demo</title>
+  <title>Ticket Intake</title>
   <link rel="stylesheet" href="/ui/style.css">
+  <script src="/ui/common.js" defer></script>
   <script src="/ui/app.js" defer></script>
 </head>
-<body>
+<body data-page="intake">
   <header class="topbar">
     <div class="brand">
       <span class="logo" aria-hidden="true">TH</span>
@@ -16,7 +17,11 @@
         <p class="muted">Triage by precedent, fixes by precedent</p>
       </div>
     </div>
-    <div id="server-info" class="chips" aria-label="Server status"></div>
+    <nav id="nav" class="nav" aria-label="Pages"></nav>
+    <div class="topbar-right">
+      <div id="mode-toggle"></div>
+      <div id="server-info" class="chips" aria-label="Server status"></div>
+    </div>
   </header>
 
   <main class="layout">
@@ -84,6 +89,7 @@
           </div>
           <button type="submit" class="primary">Create ticket</button>
         </form>
+        <div id="mode-panel" class="mode-panel"></div>
       </section>
 
       <section class="card" aria-labelledby="tickets-title">

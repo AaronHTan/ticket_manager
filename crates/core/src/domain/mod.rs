@@ -23,5 +23,6 @@ pub use ticket::{
     searchable_text,
 };
 pub use triage::{
-    Assignee, Classification, MatchSummary, RoutingDecision, SeverityAssessment, TriageReport,
+    Assignee, Classification, DraftResolution, MatchSummary, Precedent, RoutingDecision,
+    SeverityAssessment, TriageReport,
 };

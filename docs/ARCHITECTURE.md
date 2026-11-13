@@ -235,10 +235,27 @@ neighbours by cosine similarity.
 * Startup fails if repositories are configured but `git --version` cannot
   run. With no repositories configured, git is never invoked.
 
+### Preliminary resolutions for escalations
+
+When the router escalates a ticket, `ResolutionDrafter` (pure, like the
+router) attaches a `DraftResolution` to the `TriageReport`. It contains:
+
+* first steps from a playbook chosen by ticket kind (feature request,
+  question) or problem category, led by an incident step when the ticket is
+  critical;
+* up to three precedents with similarity of at least 0.3, which is far below
+  the forward threshold. A loose precedent is still a useful hint to an expert.
+
+The draft is shown in the escalation inbox and appended to the tracker's
+escalation comment. It is never sent to the reporter on its own. An
+LLM-backed drafter can replace this one, given the same inputs.
+
 ### Step-by-step mode
 
 With `server.auto_triage = false`, submitted tickets are stored but not
-queued, and recovered tickets are not re-queued at start-up. Each step then
+queued, and recovered tickets are not re-queued at start-up. With
+`server.allow_mode_switch = true` (demos only), `PUT /v1/settings` flips the
+mode at runtime. Switching to automatic queues every waiting ticket. Each step then
 runs on request:
 
 * `POST /v1/tickets/{id}/triage` runs `TriagePipeline::triage_only`: claim,
@@ -247,7 +264,9 @@ runs on request:
   `409` with the reason when the ticket is not triaged yet or `FixPolicy::check`
   rules it out.
 
-The demo UI (`apps/server/ui/`, served at `/`) is built on these two calls.
+The demo UI (`apps/server/ui/`) has two pages: intake at `/`, built on these two
+calls, and the escalation inbox at `/inbox`, built on
+`GET /v1/tickets?status=escalated&with_triage=true`.
 It is static HTML, CSS and JavaScript compiled into the binary, served with
 a strict same-origin Content-Security-Policy, and it uses only the public `/v1` API.
 

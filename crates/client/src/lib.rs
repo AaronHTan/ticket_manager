@@ -25,8 +25,8 @@ use serde::de::DeserializeOwned;
 pub use ticket_api as api;
 use ticket_api::{
     ErrorResponse, HealthResponse, ImportHistoryRequest, ImportHistoryResponse, KnowledgeEntry,
-    ListTicketsQuery, RecordResolutionRequest, SubmitTicketRequest, SubmitTicketResponse, TicketId,
-    TicketListResponse, TicketView, paths,
+    ListTicketsQuery, RecordResolutionRequest, SettingsRequest, SettingsResponse,
+    SubmitTicketRequest, SubmitTicketResponse, TicketId, TicketListResponse, TicketView, paths,
 };
 
 /// Errors returned by [`Client`].
@@ -131,6 +131,20 @@ impl Client {
     ) -> Result<KnowledgeEntry, ClientError> {
         self.send_json(Method::POST, &paths::ticket_resolution(id), request)
             .await
+    }
+
+    /// `GET /v1/settings`
+    pub async fn settings(&self) -> Result<SettingsResponse, ClientError> {
+        self.execute(self.request(Method::GET, paths::SETTINGS))
+            .await
+    }
+
+    /// `PUT /v1/settings`: switch between automatic and step-by-step triage.
+    pub async fn update_settings(
+        &self,
+        request: &SettingsRequest,
+    ) -> Result<SettingsResponse, ClientError> {
+        self.send_json(Method::PUT, paths::SETTINGS, request).await
     }
 
     /// `POST /v1/knowledge/import`

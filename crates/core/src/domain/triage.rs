@@ -113,6 +113,32 @@ impl From<&SimilarTicket> for MatchSummary {
     }
 }
 
+/// A resolved ticket cited by a [`DraftResolution`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Precedent {
+    /// The resolved ticket.
+    pub ticket_id: TicketId,
+    /// Its title.
+    pub title: String,
+    /// Similarity to the ticket being drafted for.
+    pub score: f32,
+    /// How it was resolved.
+    pub resolution: String,
+}
+
+/// A preliminary resolution for an escalated ticket, for the expert to
+/// review, edit and send. Never sent to the reporter on its own.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DraftResolution {
+    /// The draft, as readable text.
+    pub text: String,
+    /// First steps from the playbook for the ticket's category.
+    pub first_steps: Vec<String>,
+    /// The closest resolved tickets, best first, even if not similar enough
+    /// to forward on.
+    pub precedents: Vec<Precedent>,
+}
+
 /// The full, auditable outcome of triaging one ticket.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TriageReport {
@@ -124,6 +150,9 @@ pub struct TriageReport {
     pub matches: Vec<MatchSummary>,
     /// Routing decision.
     pub decision: RoutingDecision,
+    /// A preliminary resolution, drafted for escalated tickets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<DraftResolution>,
     /// When the decision was made.
     pub decided_at: DateTime<Utc>,
 }

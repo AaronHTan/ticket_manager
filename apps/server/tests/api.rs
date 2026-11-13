@@ -6,8 +6,8 @@ use std::time::Duration;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use ticket_client::api::{
-    HistoricalTicket, ImportHistoryRequest, ListTicketsQuery, RecordResolutionRequest, Severity,
-    SubmitTicketRequest, TicketId, TicketStatus, TicketView,
+    HistoricalTicket, ImportHistoryRequest, ListTicketsQuery, RecordResolutionRequest,
+    SettingsRequest, Severity, SubmitTicketRequest, TicketId, TicketStatus, TicketView,
 };
 use ticket_client::{Client, ClientError};
 use ticket_core::{
@@ -431,5 +431,121 @@ async fn demo_ui_is_served_with_a_strict_content_security_policy() {
                 .starts_with(kind),
             "{path}"
         );
+    }
+}
+
+#[tokio::test]
+async fn mode_switching_is_refused_unless_allowed() {
+    let client = Client::new(spawn_server("").await).unwrap();
+    let settings = client.settings().await.unwrap();
+    assert!(settings.auto_triage && !settings.mode_switchable);
+    let err = client
+        .update_settings(&SettingsRequest { auto_triage: false })
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, ClientError::Api { status: 409, ref message, .. } if message.contains("allow_mode_switch")),
+        "{err:?}"
+    );
+    assert!(client.settings().await.unwrap().auto_triage);
+}
+
+#[tokio::test]
+async fn switching_to_automatic_triages_waiting_tickets_and_escalations_feed_the_inbox() {
+    let client = Client::new(
+        spawn_server("[server]\nauto_triage = false\nallow_mode_switch = true\n").await,
+    )
+    .unwrap();
+    assert!(client.health().await.unwrap().mode_switchable);
+
+    // Step-by-step: the ticket waits.
+    let waiting = client
+        .submit_ticket(&submit(
+            "Security breach on admin account",
+            "Unauthorized access to the admin panel overnight.",
+        ))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(
+        client.get_ticket(waiting.id).await.unwrap().ticket.status,
+        TicketStatus::Received
+    );
+
+    // Automatic: the waiting ticket is picked up, and new ones flow through.
+    let settings = client
+        .update_settings(&SettingsRequest { auto_triage: true })
+        .await
+        .unwrap();
+    assert!(settings.auto_triage);
+    let view = wait_for_triage(&client, waiting.id).await;
+    assert_eq!(view.ticket.status, TicketStatus::Escalated);
+    let fresh = client
+        .submit_ticket(&submit(
+            "Production down for all users",
+            "Full outage since the deploy.",
+        ))
+        .await
+        .unwrap();
+    wait_for_triage(&client, fresh.id).await;
+
+    // The escalation inbox feed: escalated tickets with their triage and draft.
+    let inbox = client
+        .list_tickets(&ListTicketsQuery {
+            status: Some(TicketStatus::Escalated),
+            with_triage: Some(true),
+            ..ListTicketsQuery::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(inbox.tickets.len(), 2);
+    for listed in &inbox.tickets {
+        let triage = listed
+            .triage
+            .as_ref()
+            .expect("with_triage includes the report");
+        let draft = triage.draft.as_ref().expect("escalations carry a draft");
+        assert!(!draft.first_steps.is_empty());
+    }
+    // Without with_triage the list stays light.
+    let light = client
+        .list_tickets(&ListTicketsQuery::default())
+        .await
+        .unwrap();
+    assert!(light.tickets.iter().all(|t| t.triage.is_none()));
+
+    // The ticket view says why no code fix was attempted.
+    let view = client.get_ticket(fresh.id).await.unwrap();
+    assert!(view.fix.is_none());
+    assert!(view.fix_skipped.is_some(), "{view:?}");
+
+    // Back to step-by-step: new tickets wait again.
+    client
+        .update_settings(&SettingsRequest { auto_triage: false })
+        .await
+        .unwrap();
+    let later = client
+        .submit_ticket(&submit("Another breach report", "security breach"))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(
+        client.get_ticket(later.id).await.unwrap().ticket.status,
+        TicketStatus::Received
+    );
+}
+
+#[tokio::test]
+async fn escalation_inbox_page_is_served() {
+    let base = spawn_server("").await;
+    let http = reqwest::Client::new();
+    let page = http.get(format!("{base}/inbox")).send().await.unwrap();
+    assert_eq!(page.status(), 200);
+    assert!(page.headers().contains_key("content-security-policy"));
+    let html = page.text().await.unwrap();
+    assert!(html.contains("/ui/inbox.js") && html.contains("/ui/common.js"));
+    for path in ["/ui/inbox.js", "/ui/common.js"] {
+        let asset = http.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(asset.status(), 200, "{path}");
     }
 }

@@ -21,6 +21,8 @@ pub mod paths {
     pub const HEALTH: &str = "/healthz";
     /// Submit (`POST`) and list (`GET`) tickets.
     pub const TICKETS: &str = "/v1/tickets";
+    /// Read (`GET`) or change (`PUT`) runtime settings.
+    pub const SETTINGS: &str = "/v1/settings";
     /// Seed the knowledge base with resolved history.
     pub const KNOWLEDGE_IMPORT: &str = "/v1/knowledge/import";
 
@@ -167,6 +169,9 @@ pub struct ListTicketsQuery {
     /// Page size: default 50, at most 500.
     #[serde(default)]
     pub limit: Option<u32>,
+    /// Include each ticket's latest triage report.
+    #[serde(default)]
+    pub with_triage: Option<bool>,
 }
 
 impl ListTicketsQuery {
@@ -198,6 +203,9 @@ impl ListTicketsQuery {
         if let Some(limit) = self.limit {
             parts.push(format!("limit={limit}"));
         }
+        if let Some(with_triage) = self.with_triage {
+            parts.push(format!("with_triage={with_triage}"));
+        }
         if parts.is_empty() {
             String::new()
         } else {
@@ -222,6 +230,26 @@ pub struct ListedTicket {
     /// Kind of the latest fix attempt (`proposed`, `no_changes`, ...), if any.
     #[serde(default)]
     pub fix: Option<String>,
+    /// Latest triage report, when requested with `with_triage=true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub triage: Option<TriageReport>,
+}
+
+/// Body of `PUT /v1/settings`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SettingsRequest {
+    /// Triage (and fix) new tickets automatically.
+    pub auto_triage: bool,
+}
+
+/// Response to `GET` and `PUT /v1/settings`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettingsResponse {
+    /// Whether new tickets are triaged automatically.
+    pub auto_triage: bool,
+    /// Whether the mode may be changed at runtime (`server.allow_mode_switch`).
+    pub mode_switchable: bool,
 }
 
 /// Response to `GET /v1/tickets/{id}`.
@@ -235,6 +263,10 @@ pub struct TicketView {
     /// Latest automatic fix attempt, if one was made.
     #[serde(default)]
     pub fix: Option<FixAttempt>,
+    /// For a triaged ticket with no fix attempt: why it is not eligible for
+    /// one. Absent when it is eligible (or already has an attempt).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix_skipped: Option<String>,
 }
 
 /// Body of `POST /v1/tickets/{id}/resolution`.
@@ -288,6 +320,9 @@ pub struct HealthResponse {
     /// Whether new tickets are triaged automatically.
     #[serde(default)]
     pub auto_triage: bool,
+    /// Whether the mode may be changed at runtime with `PUT /v1/settings`.
+    #[serde(default)]
+    pub mode_switchable: bool,
     /// Whether triaged tickets can get automatic code fixes.
     #[serde(default)]
     pub fixes_enabled: bool,
@@ -364,6 +399,7 @@ mod tests {
             status: Some(TicketStatus::Forwarded),
             client: Some(ClientId::new("acme").unwrap()),
             limit: Some(10_000),
+            with_triage: None,
         };
         assert_eq!(query.to_filter().limit, TicketFilter::MAX_LIMIT);
         assert_eq!(

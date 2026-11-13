@@ -16,9 +16,11 @@ tickets fall into the first two buckets.
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
 
 **Try it:** `./scripts/demo.sh` starts the service with a seeded knowledge
-base and opens a web page where you create a ticket and step it through
-triage, an automatic code fix (pushed to a local git repository) and
-resolution. [docs/DEMO.md](docs/DEMO.md) walks through it.
+base and opens a web page where you create tickets. In *step-by-step* mode
+you run triage, the automatic code fix (pushed to a local git repository)
+and resolution yourself. In *automatic* mode they run on their own, as in
+production, and severe tickets land in an **escalation inbox** with a drafted
+preliminary resolution. [docs/DEMO.md](docs/DEMO.md) walks through both.
 
 ## Requirements
 
@@ -51,15 +53,16 @@ The CLI binary is called `ticket`. It reads `TICKET_HANDLER_URL` and `TICKET_HAN
 
 | Method | Path                               | Auth           | Purpose                              |
 |--------|------------------------------------|----------------|--------------------------------------|
-| GET    | `/`                                | none           | Demo web UI (static, no data)        |
+| GET    | `/`, `/inbox`                      | none           | Demo UI: intake and escalation inbox (static) |
 | GET    | `/healthz`                         | none           | Liveness, mode and knowledge-base size |
 | POST   | `/v1/tickets`                      | bearer token   | Submit a ticket (`202 Accepted`)     |
-| GET    | `/v1/tickets?status=&client=&limit=` | bearer token | List tickets, newest first         |
+| GET    | `/v1/tickets?status=&client=&limit=&with_triage=` | bearer token | List tickets, newest first |
 | GET    | `/v1/tickets/{id}`                 | bearer token   | Ticket, triage report and fix attempt |
 | POST   | `/v1/tickets/{id}/triage`          | bearer token   | Triage now (step-by-step mode)       |
 | POST   | `/v1/tickets/{id}/fix`             | bearer token   | Attempt a code fix now (409 says why not) |
 | POST   | `/v1/tickets/{id}/resolution`      | bearer token   | Record a human fix (learning loop)   |
 | POST   | `/v1/knowledge/import`             | bearer token   | Seed the knowledge base              |
+| GET/PUT | `/v1/settings`                    | bearer token   | Triage mode (PUT only with `allow_mode_switch`) |
 | POST   | `/v1/webhooks/jira/{connector}`    | HMAC signature | Jira webhook receiver                |
 
 Bearer auth is enabled by setting `server.api_token`.

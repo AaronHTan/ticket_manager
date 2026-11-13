@@ -6,17 +6,17 @@ use axum::http::header::AUTHORIZATION;
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::Response;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use ticket_api::{
     HealthResponse, ImportHistoryRequest, ImportHistoryResponse, KnowledgeEntry, ListTicketsQuery,
-    ListedTicket, RecordResolutionRequest, SubmitTicketRequest, SubmitTicketResponse, TicketId,
-    TicketListResponse, TicketView,
+    ListedTicket, RecordResolutionRequest, SettingsRequest, SettingsResponse, SubmitTicketRequest,
+    SubmitTicketResponse, TicketId, TicketListResponse, TicketView,
 };
 use ticket_core::{Error, Resolution};
 use ticket_jira::{JiraEvent, SIGNATURE_HEADER, parse_webhook, verify_signature};
 use tower_http::trace::TraceLayer;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -36,6 +36,8 @@ const MAX_BODY_BYTES: usize = 1024 * 1024;
 /// POST /v1/tickets/{id}/fix              bearer token
 /// POST /v1/tickets/{id}/resolution       bearer token
 /// POST /v1/knowledge/import              bearer token
+/// GET  /v1/settings                      bearer token
+/// PUT  /v1/settings                      bearer token, if allow_mode_switch
 /// POST /v1/webhooks/jira/{connector}     HMAC signature
 /// ```
 pub fn router(state: AppState) -> Router {
@@ -46,6 +48,7 @@ pub fn router(state: AppState) -> Router {
         .route("/tickets/{id}/fix", post(fix_ticket))
         .route("/tickets/{id}/resolution", post(record_resolution))
         .route("/knowledge/import", post(import_history))
+        .route("/settings", get(get_settings).merge(put(put_settings)))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
     // Webhooks authenticate with their own signatures, not the API token.
     let webhooks = Router::new().route("/webhooks/jira/{connector}", post(jira_webhook));
@@ -64,7 +67,8 @@ async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, A
         status: "ok".into(),
         version: env!("CARGO_PKG_VERSION").into(),
         knowledge_entries: state.pipeline.knowledge_size().await?,
-        auto_triage: state.auto_triage,
+        auto_triage: state.auto_triage(),
+        mode_switchable: state.mode_switchable,
         fixes_enabled: state.pipeline.fixes_enabled(),
         repositories: state
             .pipeline
@@ -103,9 +107,62 @@ async fn list_tickets(
             .latest_fix(ticket.id)
             .await?
             .map(|attempt| attempt.result.kind().to_owned());
-        tickets.push(ListedTicket { ticket, fix });
+        let triage = if query.with_triage.unwrap_or(false) {
+            state
+                .pipeline
+                .ticket_with_triage(ticket.id)
+                .await?
+                .and_then(|(_, triage)| triage)
+        } else {
+            None
+        };
+        tickets.push(ListedTicket {
+            ticket,
+            fix,
+            triage,
+        });
     }
     Ok(Json(TicketListResponse { tickets }))
+}
+
+async fn get_settings(State(state): State<AppState>) -> Json<SettingsResponse> {
+    Json(SettingsResponse {
+        auto_triage: state.auto_triage(),
+        mode_switchable: state.mode_switchable,
+    })
+}
+
+/// Switches the triage mode. Turning automatic mode on also queues every
+/// ticket still waiting in `received`, as a restart would.
+async fn put_settings(
+    State(state): State<AppState>,
+    Json(request): Json<SettingsRequest>,
+) -> Result<Json<SettingsResponse>, ApiError> {
+    if !state.mode_switchable {
+        return Err(Error::Conflict(
+            "the triage mode cannot be changed at runtime (server.allow_mode_switch = false)"
+                .into(),
+        )
+        .into());
+    }
+    let was = state.auto_triage();
+    state.set_auto_triage(request.auto_triage);
+    if request.auto_triage && !was {
+        let pending = state.pipeline.recover(10_000).await?;
+        info!(
+            count = pending.len(),
+            "automatic mode on; queueing waiting tickets"
+        );
+        for id in pending {
+            state.enqueue(id);
+        }
+    } else if !request.auto_triage && was {
+        info!("step-by-step mode on; new tickets wait for explicit triage");
+    }
+    Ok(Json(SettingsResponse {
+        auto_triage: request.auto_triage,
+        mode_switchable: true,
+    }))
 }
 
 async fn get_ticket(
@@ -140,10 +197,15 @@ async fn ticket_view(state: &AppState, id: TicketId) -> Result<TicketView, ApiEr
         .await?
         .ok_or_else(|| Error::NotFound(format!("ticket {id}")))?;
     let fix = state.pipeline.latest_fix(id).await?;
+    let fix_skipped = match (&triage, &fix) {
+        (Some(report), None) => state.pipeline.fix_skip_reason(&ticket, report),
+        _ => None,
+    };
     Ok(TicketView {
         ticket,
         triage,
         fix,
+        fix_skipped,
     })
 }
 

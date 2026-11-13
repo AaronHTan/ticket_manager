@@ -44,7 +44,10 @@ pub async fn build(config: &AppConfig) -> anyhow::Result<App> {
         queue,
         jira: Arc::new(config.connectors.jira.clone()),
         api_token: config.server.api_token.as_deref().map(Arc::from),
-        auto_triage: config.server.auto_triage,
+        auto_triage: Arc::new(std::sync::atomic::AtomicBool::new(
+            config.server.auto_triage,
+        )),
+        mode_switchable: config.server.allow_mode_switch,
     };
     if !config.server.auto_triage {
         info!("automatic triage is off; tickets wait for POST /v1/tickets/{{id}}/triage");

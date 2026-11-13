@@ -144,12 +144,12 @@ async fn apply_to_tracker(
         }
         RoutingDecision::Escalate { assignee, reason } => {
             tracker.assign(external, assignee).await?;
-            tracker
-                .comment(
-                    external,
-                    &format!("[triage] Escalated to {}: {reason}.", assignee.name),
-                )
-                .await?;
+            let mut body = format!("[triage] Escalated to {}: {reason}.", assignee.name);
+            if let Some(draft) = &report.draft {
+                body.push_str("\n\n");
+                body.push_str(&draft.text);
+            }
+            tracker.comment(external, &body).await?;
         }
     }
     Ok(())

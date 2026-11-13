@@ -10,6 +10,7 @@
 //! * [`routing`]: a pure function from (classification, matches) to a
 //!   [`RoutingDecision`](ticket_core::RoutingDecision).
 //! * [`dispatch`]: carries out a decision against external trackers and notifiers.
+//! * [`draft`]: a preliminary resolution for escalated tickets.
 //! * [`pipeline`]: orchestrates the steps and the learning feedback loop.
 //! * [`worker`]: a bounded queue and worker pool for asynchronous processing.
 //! * [`fix`]: resolving a ticket to a repository and proposing a code change
@@ -17,6 +18,7 @@
 
 pub mod classifier;
 pub mod dispatch;
+pub mod draft;
 pub mod fix;
 pub mod pipeline;
 pub mod routing;
@@ -24,6 +26,7 @@ pub mod worker;
 
 pub use classifier::{KeywordRule, RuleBasedClassifier};
 pub use dispatch::{Dispatcher, LogNotifier};
+pub use draft::ResolutionDrafter;
 pub use fix::{
     FixCoordinator, FixPolicy, LogCodeHost, NoopFixer, PatchFixer, RepositoryConfig,
     RepositoryDirectory,

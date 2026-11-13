@@ -1,5 +1,5 @@
-// Ticket Handler demo UI. Plain JavaScript, no build step, same-origin API.
-// All user-supplied text is rendered with textContent, never as HTML.
+// Ticket intake page: create tickets and follow (or step) them through the
+// pipeline. Helpers and the header come from common.js.
 "use strict";
 
 const EXAMPLES = [
@@ -48,18 +48,18 @@ const EXAMPLES = [
       kind: "feature_request", components: "frontend", reporter: "Jordan",
     },
   },
+  {
+    label: "Production outage",
+    hint: "An outage for all users is critical, so it is escalated to the on-call expert at once, with a drafted first response waiting in the escalation inbox.",
+    ticket: {
+      title: "Production down for all users",
+      description: "Every page returns 503 since the 09:00 deploy; this is a full outage.",
+      kind: "incident", severity: "critical", reporter: "ops@acme.test",
+    },
+  },
 ];
 
-const STATUS_LABELS = {
-  received: "Received", triaging: "Triaging", auto_resolved: "Auto-resolved",
-  forwarded: "Forwarded", escalated: "Escalated", resolved: "Resolved", failed: "Failed",
-};
-const FIX_LABELS = {
-  proposed: "Fix proposed", no_changes: "No fix", no_repository: "No repository", failed: "Fix failed",
-};
-
 const state = {
-  health: null,
   tickets: [],
   selectedId: null,
   view: null,
@@ -68,98 +68,63 @@ const state = {
   busy: false,
 };
 
-// ---------------------------------------------------------------- helpers
-
-function h(tag, props, ...children) {
-  const el = document.createElement(tag);
-  for (const [key, value] of Object.entries(props || {})) {
-    if (value === null || value === undefined || value === false) continue;
-    if (key === "class") el.className = value;
-    else if (key === "text") el.textContent = value;
-    else if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
-    else el.setAttribute(key, value === true ? "" : value);
-  }
-  for (const child of children.flat()) {
-    if (child === null || child === undefined || child === false) continue;
-    el.append(child instanceof Node ? child : document.createTextNode(String(child)));
-  }
-  return el;
-}
-
-function storage(action, value) {
-  try {
-    if (action === "get") return window.localStorage.getItem("ticket-handler-token");
-    if (action === "set") window.localStorage.setItem("ticket-handler-token", value);
-  } catch (_) { /* storage may be unavailable; the token then lasts this page only */ }
-  return null;
-}
-let token = storage("get");
-
-async function api(method, path, body) {
-  const headers = { Accept: "application/json" };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(path, {
-    method, headers, body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (response.status === 401) {
-    const entered = window.prompt("This server requires an API token (server.api_token):");
-    if (entered) {
-      token = entered.trim();
-      storage("set", token);
-      return api(method, path, body);
-    }
-  }
-  const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!response.ok) {
-    const error = new Error((data && data.message) || `${response.status} ${response.statusText}`);
-    error.status = response.status;
-    throw error;
-  }
-  return data;
-}
-
-let toastTimer = null;
-function toast(message, kind = "info") {
-  const el = document.getElementById("toast");
-  el.textContent = message;
-  el.className = `toast ${kind}`;
-  el.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, 5000);
-}
-
-const pct = (score) => `${Math.round(score * 100)}%`;
-const shortId = (id) => id.slice(0, 8);
-const when = (iso) => new Date(iso).toLocaleString();
-const badge = (cls, text) => h("span", { class: `badge ${cls}`, text });
-const statusBadge = (status) => badge(`status-${status}`, STATUS_LABELS[status] || status);
-
 // ---------------------------------------------------------------- server info
 
 async function loadHealth() {
-  try {
-    state.health = await api("GET", "/healthz");
-  } catch (error) {
-    toast(`Cannot reach the server: ${error.message}`, "error");
-    return;
-  }
-  const hl = state.health;
-  const chips = document.getElementById("server-info");
-  chips.replaceChildren(
-    h("span", { class: `chip ${hl.auto_triage ? "" : "accent"}` },
-      hl.auto_triage ? "Automatic mode" : "Step-by-step mode"),
-    h("span", { class: "chip" }, `Knowledge base: ${hl.knowledge_entries} resolved tickets`),
-    h("span", { class: "chip" }, hl.fixes_enabled ? "Code fixes: on" : "Code fixes: off"),
-    h("span", { class: "chip" },
-      hl.repositories.length ? `Repositories: ${hl.repositories.join(", ")}` : "No repositories"),
-  );
+  const hl = await loadServerInfo();
+  if (!hl) return;
   const repoSelect = document.querySelector("#new-ticket select[name=repository]");
   const chosen = repoSelect.value;
   repoSelect.replaceChildren(h("option", { value: "" }, "Not given"),
     ...hl.repositories.map((r) => h("option", { value: r }, r)));
   if (hl.repositories.includes(chosen)) repoSelect.value = chosen;
+  renderModePanel();
+}
+
+/** Under the form: what the current mode does, and the traffic simulator. */
+function renderModePanel() {
+  const auto = shared.health && shared.health.auto_triage;
+  const panel = document.getElementById("mode-panel");
+  panel.replaceChildren(
+    h("p", { class: "muted" }, auto
+      ? "Automatic mode, as in production: each ticket is triaged as soon as it arrives. Eligible bugs get a code fix, and severe or novel tickets go straight to the escalation inbox with a preliminary resolution."
+      : "Step-by-step mode: a new ticket waits until you run each step on the right."),
+    auto ? h("button", { type: "button", class: "ghost", onclick: simulateTraffic, disabled: simulating || null },
+      simulating ? "Sending tickets\u2026" : `Simulate incoming tickets (${EXAMPLES.length})`) : null);
+}
+
+let simulating = false;
+
+/** Sends every example as if from different customers, a moment apart. */
+async function simulateTraffic() {
+  if (simulating) return;
+  simulating = true;
+  renderModePanel();
+  let sent = 0;
+  for (const example of EXAMPLES) {
+    const t = example.ticket;
+    const body = {
+      client: "acme",
+      title: t.title,
+      description: t.description,
+      kind: t.kind,
+      components: (t.components || "").split(",").map((c) => c.trim()).filter(Boolean),
+    };
+    if (t.severity) body.severity = t.severity;
+    if (t.reporter) body.reporter = t.reporter;
+    if (t.repository) body.code_context = { repository: t.repository };
+    try {
+      await api("POST", "/v1/tickets", body);
+      sent += 1;
+      await refresh(false);
+    } catch (error) {
+      toast(error.message, "error");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 900));
+  }
+  simulating = false;
+  renderModePanel();
+  toast(`Sent ${sent} tickets. Severe ones are in the escalation inbox.`, "success");
 }
 
 // ---------------------------------------------------------------- create form
@@ -342,7 +307,7 @@ function stepTriage(view) {
   const t = view; // TicketView flattens the ticket fields
   const report = view.triage;
   if (!report) {
-    const auto = state.health && state.health.auto_triage;
+    const auto = shared.health && shared.health.auto_triage;
     const running = t.status === "triaging" || (auto && t.status === "received");
     return step(2, "Triage", running ? "working" : "current",
       "Compare with past tickets, assess severity, and decide who handles it.",
@@ -367,15 +332,10 @@ function stepTriage(view) {
             meter(m.score),
             h("span", { class: "mono match-score", text: pct(m.score) }))))
           : h("p", { class: "muted" }, "The knowledge base is empty."))),
-    renderDecision(report.decision));
-}
-
-// A similarity bar. The width is set through the CSSOM: the page's
-// Content-Security-Policy forbids inline style attributes, but not this.
-function meter(score) {
-  const fill = h("span", { class: "meter-fill" });
-  fill.style.width = pct(Math.max(0, Math.min(1, score)));
-  return h("span", { class: "meter", title: pct(score) }, fill);
+    renderDecision(report.decision),
+    report.draft ? renderDraft(report.draft) : null,
+    report.draft ? h("p", {},
+      h("a", { href: `/inbox#${t.id}` }, "Open in the escalation inbox \u2192")) : null);
 }
 
 function renderDecision(decision) {
@@ -398,7 +358,7 @@ function stepFix(view) {
   const t = view; // TicketView flattens the ticket fields
   const fix = view.fix;
   const note = (state.notes[t.id] || {}).fix;
-  const fixesOn = state.health && state.health.fixes_enabled;
+  const fixesOn = shared.health && shared.health.fixes_enabled;
   const description = "Re-apply the patch of the most similar resolved ticket in a throwaway checkout, then commit and push it to a review branch.";
   if (!view.triage) return step(3, "Code fix", "pending", description);
   if (!fixesOn && !fix) {
@@ -408,12 +368,15 @@ function stepFix(view) {
     if (t.status === "auto_resolved" || t.status === "resolved") {
       return step(3, "Code fix", "skipped", "This ticket is already resolved, so no code change is needed.");
     }
-    if (note) {
-      return step(3, "Code fix", "skipped", description, h("p", { class: "notice" }, note));
+    const reason = view.fix_skipped || note;
+    if (reason) {
+      return step(3, "Code fix", "skipped", description,
+        h("p", { class: "notice" }, `Not eligible for a code fix: ${reason.replace(/^not eligible for a code fix: /, "")}.`));
     }
-    const auto = state.health && state.health.auto_triage;
+    if (shared.health && shared.health.auto_triage) {
+      return step(3, "Code fix", "working", description, h("p", {}, "Fixing\u2026"));
+    }
     return step(3, "Code fix", "current", description,
-      auto ? h("p", { class: "muted" }, "In automatic mode, eligible tickets are fixed right after triage.") : null,
       actionButton("Attempt code fix", () => runAction("fix", `/v1/tickets/${t.id}/fix`)));
   }
   const result = fix.result;
@@ -463,7 +426,7 @@ function stepResolve(view) {
   const proposed = view.fix && view.fix.result === "proposed" ? view.fix : null;
   const summary = proposed
     ? `Merged the automatic fix on ${proposed.branch}.`
-    : decision.suggested_resolution || "";
+    : decision.suggested_resolution || (view.triage.draft ? view.triage.draft.text : "");
   const form = h("form", { class: "form resolve-form" },
     h("label", { class: "field" }, h("span", {}, "What fixed it"),
       h("textarea", { name: "summary", rows: "3", required: true }, summary)),
@@ -522,13 +485,14 @@ async function runAction(kind, path, body) {
 async function refresh(force) {
   if (force) state.viewKey = "";
   try {
-    await Promise.all([loadTickets(), loadView(), force ? loadHealth() : null]);
+    await Promise.all([loadTickets(), loadView(), loadEscalationCount(), force ? loadHealth() : null]);
   } catch (error) {
     toast(error.message, "error");
   }
 }
 
 async function main() {
+  shared.onModeChange = () => { renderModePanel(); refresh(true); };
   await loadHealth();
   setupForm();
   const fromHash = window.location.hash.slice(1);
@@ -538,7 +502,7 @@ async function main() {
     const id = window.location.hash.slice(1);
     if (id && id !== state.selectedId) select(id);
   });
-  setInterval(() => { if (!state.busy) refresh(false); }, 2500);
+  setInterval(() => { if (!state.busy) refresh(false); }, 2000);
 }
 
 main();

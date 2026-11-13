@@ -13,6 +13,7 @@ workers = 4
 queue_capacity = 1024
 log_format = "pretty"          # "pretty" | "json"
 auto_triage = true             # false: tickets wait for POST /v1/tickets/{id}/triage (demo mode)
+allow_mode_switch = false      # true: PUT /v1/settings may flip auto_triage (demos only)
 # api_token = "change-me"      # when set, /v1 requires `Authorization: Bearer <token>`
 
 [database]

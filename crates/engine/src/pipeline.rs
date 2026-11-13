@@ -12,6 +12,7 @@ use ticket_core::{
 use tracing::{info, instrument, warn};
 
 use crate::dispatch::Dispatcher;
+use crate::draft::ResolutionDrafter;
 use crate::fix::{FixCoordinator, FixPolicy};
 use crate::routing::TicketRouter;
 
@@ -44,6 +45,7 @@ pub struct TriagePipeline {
     dispatcher: Dispatcher,
     top_k: usize,
     fixes: Option<(Arc<FixCoordinator>, FixPolicy)>,
+    drafter: ResolutionDrafter,
 }
 
 impl TriagePipeline {
@@ -59,6 +61,7 @@ impl TriagePipeline {
             dispatcher,
             top_k: Self::DEFAULT_TOP_K,
             fixes: None,
+            drafter: ResolutionDrafter::default(),
         }
     }
 
@@ -228,6 +231,16 @@ impl TriagePipeline {
         Ok(self.run_fix(&ticket).await)
     }
 
+    /// Why `ticket`, triaged as `report`, will not get a code fix, or `None`
+    /// if it is eligible.
+    #[must_use]
+    pub fn fix_skip_reason(&self, ticket: &Ticket, report: &TriageReport) -> Option<String> {
+        match &self.fixes {
+            None => Some("no fix path is configured".into()),
+            Some((_, policy)) => policy.check(ticket, report).err(),
+        }
+    }
+
     /// Whether triaged tickets are fixed automatically (`[fixes] enabled`).
     #[must_use]
     pub fn fixes_enabled(&self) -> bool {
@@ -276,11 +289,15 @@ impl TriagePipeline {
         let matches = self.deps.knowledge.search(&embedding, self.top_k).await?;
         let classification = self.deps.classifier.classify(ticket, &matches).await?;
         let decision = self.router.decide(&classification, &matches);
+        let draft = self
+            .drafter
+            .draft(ticket, &classification, &matches, &decision);
         Ok(TriageReport {
             ticket_id: ticket.id,
             classification,
             matches: matches.iter().map(MatchSummary::from).collect(),
             decision,
+            draft,
             decided_at: Utc::now(),
         })
     }

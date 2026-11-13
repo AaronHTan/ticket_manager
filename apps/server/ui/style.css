@@ -52,6 +52,9 @@
 
 * { box-sizing: border-box; }
 
+/* Classes that set `display` would otherwise override the hidden attribute. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -317,3 +320,111 @@ button:disabled { opacity: 0.55; cursor: progress; }
 }
 .toast.success { background: var(--good); color: #fff; }
 .toast.error { background: var(--bad); color: #fff; }
+
+/* ---------------------------------------------------------------- header: nav and mode */
+
+.nav { display: flex; gap: 4px; flex-wrap: wrap; }
+.nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 7px;
+  color: var(--muted);
+  font-weight: 600;
+  text-decoration: none;
+}
+.nav-link:hover { background: var(--surface-2); color: var(--text); }
+.nav-link.active { background: var(--accent-soft); color: var(--accent); }
+.count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--bad);
+  color: #fff;
+  font-size: 11.5px;
+  text-align: center;
+}
+.topbar-right { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.segmented button {
+  border: 0;
+  background: transparent;
+  padding: 5px 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.segmented button.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+@media (prefers-color-scheme: dark) {
+  .segmented button.active { background: var(--accent-soft); }
+}
+
+.mode-panel { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.mode-panel p { margin: 0; font-size: 12.5px; }
+.mode-panel button { align-self: flex-start; }
+
+a { color: var(--accent); }
+
+/* ---------------------------------------------------------------- draft */
+
+.draft {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px dashed var(--warn);
+  background: var(--warn-soft);
+}
+.draft-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.draft-head h4 { margin: 0; color: var(--text); font-size: 14px; }
+.draft-badge { background: var(--surface); color: var(--warn); }
+.draft h5 { margin: 10px 0 4px; font-size: 12.5px; color: var(--muted); }
+.draft-steps { margin: 0; padding-left: 20px; }
+.draft-steps li { margin: 3px 0; }
+.precedents { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.precedent-title { font-weight: 600; }
+
+/* ---------------------------------------------------------------- inbox */
+
+.inbox-layout {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 16px 20px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.inbox-bar { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: flex-end; }
+.inbox-bar p { margin: 2px 0 0; }
+.field.inline { min-width: 220px; }
+.inbox { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.inbox-card { border-left: 5px solid var(--border); transition: opacity 0.4s, transform 0.4s; }
+.inbox-card h3 { font-size: 16px; overflow-wrap: anywhere; }
+.inbox-card-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: flex-start; }
+.inbox-card-head p { margin: 2px 0 0; font-size: 12.5px; }
+.sev-border-critical { border-left-color: var(--bad); }
+.sev-border-high { border-left-color: var(--warn); }
+.sev-border-medium { border-left-color: var(--info); }
+.sev-border-low { border-left-color: var(--good); }
+.new-badge { background: var(--accent); color: var(--accent-text); }
+.inbox-card.is-new { box-shadow: 0 0 0 2px var(--accent); }
+.inbox-card.focused { box-shadow: 0 0 0 2px var(--accent); }
+.inbox-card.leaving { opacity: 0; transform: translateX(16px); }
+.respond { margin-top: 10px; }
+.respond summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+.respond .form { margin-top: 8px; }
+.respond textarea { font-family: var(--mono); font-size: 12.5px; }
+.respond button { align-self: flex-start; }
+.card-links { margin: 10px 0 0; font-size: 12.5px; }
+.inbox-empty { text-align: center; }
+.inbox-empty p { max-width: 560px; margin: 6px auto 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .inbox-card { transition: none; }
+}

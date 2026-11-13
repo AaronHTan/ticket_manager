@@ -97,6 +97,9 @@ pub struct ServerConfig {
     /// only run on `POST /v1/tickets/{id}/fix`. Used to step through the
     /// pipeline in the demo.
     pub auto_triage: bool,
+    /// Allow switching `auto_triage` at runtime with `PUT /v1/settings`.
+    /// Meant for demos: keep it off in production.
+    pub allow_mode_switch: bool,
 }
 
 impl Default for ServerConfig {
@@ -108,6 +111,7 @@ impl Default for ServerConfig {
             api_token: None,
             log_format: LogFormat::Pretty,
             auto_triage: true,
+            allow_mode_switch: false,
         }
     }
 }

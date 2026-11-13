@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Starts the browser demo: a ticket-handler server in step-by-step mode, with
-# a seeded knowledge base and a local git repository it can fix.
+# Starts the browser demo: a ticket-handler server with a seeded knowledge
+# base and a local git repository it can fix. Two pages: ticket intake (/)
+# and the escalation inbox (/inbox).
 #
-# Usage: scripts/demo.sh [--with-tickets] [--no-open] [--port N]
+# Usage: scripts/demo.sh [--auto] [--with-tickets] [--no-open] [--port N]
 #
+#   --auto           start in automatic mode, as production runs (the page
+#                    can switch modes either way at any time)
 #   --with-tickets   also load the 10 sample tickets (already triaged)
 #   --no-open        do not open a browser window
 #   --port N         listen on port N instead of 18081
@@ -14,6 +17,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+AUTO=false
 WITH_TICKETS=0
 OPEN_BROWSER=1
 PORT=18081
@@ -22,7 +26,8 @@ while [[ $# -gt 0 ]]; do
         --with-tickets) WITH_TICKETS=1 ;;
         --no-open) OPEN_BROWSER=0 ;;
         --port) PORT="${2:?--port needs a value}"; shift ;;
-        -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --auto) AUTO=true ;;
+        -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
     esac
     shift
@@ -64,6 +69,7 @@ fi
 
 say "Starting the server on $URL"
 TICKET_HANDLER_CONFIG=config/demo.toml TICKET_HANDLER_SERVER__BIND="127.0.0.1:$PORT" \
+    TICKET_HANDLER_SERVER__AUTO_TRIAGE="$AUTO" \
     "$BIN/ticket-server" >"$DEMO/server.log" 2>&1 &
 SERVER_PID=$!
 stop_server() {
@@ -88,19 +94,22 @@ if [[ $OPEN_BROWSER -eq 1 ]]; then
     fi
 fi
 
+if [[ $AUTO == true ]]; then MODE="automatic"; else MODE="step-by-step"; fi
 cat <<EOF
 
-  Demo running at  $URL
+  Demo running ($MODE mode; switch at the top of the page)
+    Ticket intake      $URL/
+    Escalation inbox   $URL/inbox
 
-  1. Create a ticket (try the "Checkout crash on empty cart" example).
-  2. Click "Run triage" to see how it is classified and routed.
-  3. Click "Attempt code fix" to have the fix re-applied and pushed.
-  4. Record a resolution to teach the knowledge base.
+  Step-by-step: create a ticket, then click Run triage, Attempt code fix
+  and Record resolution to see each stage.
 
-  Inspect the result:
-    git --git-dir=$REMOTE branch --list 'ticket/*'
-    git --git-dir=$REMOTE diff main ticket/<ticket-id>
-  Server log: $DEMO/server.log
+  Automatic (production): create tickets, or click "Simulate incoming
+  tickets", and everything runs on its own. Open the escalation inbox in a
+  second window to watch severe tickets arrive with a drafted response.
+
+  Fix branches: git --git-dir=$REMOTE branch --list 'ticket/*'
+  Server log:   $DEMO/server.log
 
   Press Ctrl+C to stop.
 EOF

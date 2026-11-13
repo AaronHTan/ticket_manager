@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Escalation Inbox</title>
+  <link rel="stylesheet" href="/ui/style.css">
+  <script src="/ui/common.js" defer></script>
+  <script src="/ui/inbox.js" defer></script>
+</head>
+<body data-page="inbox">
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">TH</span>
+      <div>
+        <h1>Ticket Handler</h1>
+        <p class="muted">Escalations for experts, with a drafted first response</p>
+      </div>
+    </div>
+    <nav id="nav" class="nav" aria-label="Pages"></nav>
+    <div class="topbar-right">
+      <div id="mode-toggle"></div>
+      <div id="server-info" class="chips" aria-label="Server status"></div>
+    </div>
+  </header>
+
+  <main class="inbox-layout">
+    <section class="card inbox-bar" aria-label="Inbox filters">
+      <div>
+        <h2>Escalation inbox</h2>
+        <p class="muted" id="inbox-summary">Loading&hellip;</p>
+      </div>
+      <label class="field inline">
+        <span>Team</span>
+        <select id="team-filter"><option value="">All teams</option></select>
+      </label>
+    </section>
+    <ul id="inbox" class="inbox" aria-live="polite"></ul>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

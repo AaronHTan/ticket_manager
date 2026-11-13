@@ -1,8 +1,20 @@
 # Demo: from ticket to fix branch, in the browser
 
 The demo runs the service on your machine with a seeded knowledge base and a
-local git repository, and gives you a web page where you create a ticket and
-step it through the pipeline yourself:
+local git repository. It has two pages:
+
+* **Ticket intake** (`/`): create tickets and follow them through the pipeline.
+* **Escalation inbox** (`/inbox`): what an expert team sees. Severe or novel
+  tickets arrive there live, each with a drafted preliminary resolution.
+
+It runs in two modes, switched with the toggle at the top of either page:
+
+* **Step-by-step** (the default): you run each stage yourself, to see what
+  the system does at each point.
+* **Automatic**: how it runs in production. You only create tickets, and
+  triage, code fixes and escalations happen on their own.
+
+In step-by-step mode, a ticket goes through four stages:
 
 1. **Create**: write a ticket, or start from one of the examples.
 2. **Triage**: see its severity and the reasons for it, the most similar
@@ -48,11 +60,12 @@ It runs until you press **Ctrl+C**, and starts from scratch each time.
 
 | Option           | Effect                                                        |
 |------------------|---------------------------------------------------------------|
+| `--auto`         | start in automatic mode (the toggle still works)              |
 | `--with-tickets` | also load the 10 sample tickets, already triaged              |
 | `--no-open`      | do not open a browser window                                  |
 | `--port N`       | listen on port `N` instead of 18081                           |
 
-## Walkthrough
+## Walkthrough: step-by-step mode
 
 ### 1. Create a ticket
 
@@ -66,6 +79,7 @@ from an example**. Each one comes with a note on what will happen to it.
 | Duplicate subscription charge  | Forwarded. The fix step finds no patch close enough and changes nothing |
 | Suspicious admin logins        | Critical, so it is **escalated** to Security and never auto-fixed |
 | Dark mode request              | Novel, so it is **escalated** to an expert. Good for trying the learning loop (below) |
+| Production outage              | Critical, so it is **escalated** to on-call at once, with a drafted incident response |
 
 You can also edit any field, or write your own ticket. Click **Create
 ticket**. It appears in the list as *Received* and opens on the right.
@@ -113,6 +127,45 @@ as *high* severity, and nothing above medium is auto-resolved however well it
 matches. A second checkout ticket is forwarded with "severity high requires
 human review", and gets its own code fix.
 
+## Walkthrough: automatic mode (production)
+
+1. Click **Automatic** at the top of the page, or start with
+   `./scripts/demo.sh --auto`. Any ticket still waiting is picked up straight away.
+2. Open the **Escalation inbox** in a second window, side by side, so you can
+   watch tickets arrive.
+3. On the intake page, create tickets, or click **Simulate incoming tickets**,
+   which sends all six examples a moment apart. Each one goes through on its own:
+   * the password reset is **auto-resolved**;
+   * the checkout crash is **forwarded**, and its **code fix** is pushed to a
+     branch within a second or two;
+   * the duplicate charge is **forwarded**, and its fix attempt finds nothing
+     safe to apply;
+   * the admin-login breach and the outage are **critical**, and the dark-mode
+     request is **novel**, so all three are **escalated**. They appear in the
+     inbox, marked *New*, under Security Team or Platform On-Call.
+
+### The escalation inbox
+
+Each escalated ticket shows its severity, team, why it was escalated, and a
+**preliminary resolution**:
+
+* **Suggested first steps** from a playbook for the problem category
+  (security, database, billing, authentication, performance) or the kind of
+  request (feature requests and questions get their own). Critical tickets
+  start with an incident step.
+* **Similar past cases**: the closest resolved tickets and how they were
+  fixed, even when they are not close enough to forward on. If nothing is
+  close, the draft says the ticket looks new.
+
+Filter by **Team** to see one team's queue. Open **Review and send the
+resolution** to edit the draft and send it. The ticket leaves the inbox as
+*Resolved*, and its resolution joins the knowledge base. The *Escalation
+inbox* tab shows a count of waiting escalations on both pages.
+
+The draft is never sent on its own: it is a starting point for the expert.
+When a ticket came from Jira, the draft is also added to the escalation
+comment on the issue.
+
 ## The same steps from a terminal
 
 The page uses the same HTTP API as the `ticket` CLI, so you can drive the
@@ -133,13 +186,14 @@ $T resolve <id> --summary "Merged the automatic fix"   # step 4
 
 The page refreshes every few seconds, so tickets created this way appear there too.
 
-## How step-by-step mode works
+## How the modes work
 
 `config/demo.toml` sets:
 
 ```toml
 [server]
-auto_triage = false   # tickets wait in `received` until triaged on request
+auto_triage = false        # start step-by-step: tickets wait in `received`
+allow_mode_switch = true   # let the page switch modes (PUT /v1/settings); keep off in production
 
 [repositories.web-app]
 remote = "data/demo/remotes/web-app.git"
@@ -151,9 +205,11 @@ enabled = true        # bugs and incidents that were forwarded or escalated, up 
 ```
 
 With `auto_triage = false`, the server never triages on its own. The buttons
-call `POST /v1/tickets/{id}/triage` and `POST /v1/tickets/{id}/fix`. With
-the default (`true`), the same page shows each step completing on its own
-within a moment, which is how production runs.
+call `POST /v1/tickets/{id}/triage` and `POST /v1/tickets/{id}/fix`.
+Switching to automatic (`PUT /v1/settings {"auto_triage": true}`) queues
+anything waiting, and from then on every ticket is triaged by the worker
+pool as it arrives, exactly as in production. A production server keeps
+`allow_mode_switch` off, so its mode cannot be changed over the API.
 
 ## Troubleshooting
 

@@ -626,6 +626,7 @@ mod tests {
             },
             matches: vec![],
             decision,
+            draft: None,
             decided_at: Utc::now(),
         }
     }
