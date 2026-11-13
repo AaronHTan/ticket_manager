@@ -553,6 +553,34 @@ impl Ticket {
     }
 }
 
+/// Which tickets [`TicketRepository::list`](crate::ports::TicketRepository::list) returns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TicketFilter {
+    /// Only tickets in this status.
+    pub status: Option<TicketStatus>,
+    /// Only tickets of this client.
+    pub client: Option<ClientId>,
+    /// Maximum number returned.
+    pub limit: u32,
+}
+
+impl TicketFilter {
+    /// Default page size.
+    pub const DEFAULT_LIMIT: u32 = 50;
+    /// Largest page size accepted.
+    pub const MAX_LIMIT: u32 = 500;
+}
+
+impl Default for TicketFilter {
+    fn default() -> Self {
+        Self {
+            status: None,
+            client: None,
+            limit: Self::DEFAULT_LIMIT,
+        }
+    }
+}
+
 /// Canonical text form used for embeddings.
 ///
 /// Live tickets and knowledge-base entries must be embedded the same way,

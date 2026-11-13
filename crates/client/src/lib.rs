@@ -25,8 +25,8 @@ use serde::de::DeserializeOwned;
 pub use ticket_api as api;
 use ticket_api::{
     ErrorResponse, HealthResponse, ImportHistoryRequest, ImportHistoryResponse, KnowledgeEntry,
-    RecordResolutionRequest, SubmitTicketRequest, SubmitTicketResponse, TicketId, TicketView,
-    paths,
+    ListTicketsQuery, RecordResolutionRequest, SubmitTicketRequest, SubmitTicketResponse, TicketId,
+    TicketListResponse, TicketView, paths,
 };
 
 /// Errors returned by [`Client`].
@@ -94,6 +94,15 @@ impl Client {
         request: &SubmitTicketRequest,
     ) -> Result<SubmitTicketResponse, ClientError> {
         self.send_json(Method::POST, paths::TICKETS, request).await
+    }
+
+    /// `GET /v1/tickets`
+    pub async fn list_tickets(
+        &self,
+        query: &ListTicketsQuery,
+    ) -> Result<TicketListResponse, ClientError> {
+        let path = format!("{}{}", paths::TICKETS, query.to_query_string());
+        self.execute(self.request(Method::GET, &path)).await
     }
 
     /// `GET /v1/tickets/{id}`

@@ -35,6 +35,7 @@ cargo run -p ticket-cli -- submit --client acme \
     --title "Password reset email not received" \
     --description "User requested a password reset but the reset email never arrived." \
     --kind bug --component auth --reporter jane@acme.test
+cargo run -p ticket-cli -- list --status escalated
 cargo run -p ticket-cli -- get <id-from-previous-command>
 cargo run -p ticket-cli -- resolve <id> --summary "What fixed it" --automatable
 ```
@@ -47,6 +48,7 @@ The CLI binary is called `ticket`. It reads `TICKET_HANDLER_URL` and `TICKET_HAN
 |--------|------------------------------------|----------------|--------------------------------------|
 | GET    | `/healthz`                         | none           | Liveness and knowledge-base size     |
 | POST   | `/v1/tickets`                      | bearer token   | Submit a ticket (`202 Accepted`)     |
+| GET    | `/v1/tickets?status=&client=&limit=` | bearer token | List tickets, newest first         |
 | GET    | `/v1/tickets/{id}`                 | bearer token   | Ticket and latest triage report      |
 | POST   | `/v1/tickets/{id}/resolution`      | bearer token   | Record a human fix (learning loop)   |
 | POST   | `/v1/knowledge/import`             | bearer token   | Seed the knowledge base              |

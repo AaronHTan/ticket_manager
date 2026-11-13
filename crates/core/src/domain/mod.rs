@@ -19,7 +19,8 @@ pub use knowledge::{HistoricalTicket, KnowledgeEntry, Resolution, SimilarTicket}
 pub use reporter::{Reporter, TicketKind};
 pub use severity::Severity;
 pub use ticket::{
-    ClientId, ExternalRef, Link, NewTicket, Ticket, TicketId, TicketStatus, searchable_text,
+    ClientId, ExternalRef, Link, NewTicket, Ticket, TicketFilter, TicketId, TicketStatus,
+    searchable_text,
 };
 pub use triage::{
     Assignee, Classification, MatchSummary, RoutingDecision, SeverityAssessment, TriageReport,

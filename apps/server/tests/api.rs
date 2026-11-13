@@ -6,8 +6,8 @@ use std::time::Duration;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use ticket_client::api::{
-    HistoricalTicket, ImportHistoryRequest, RecordResolutionRequest, Severity, SubmitTicketRequest,
-    TicketId, TicketStatus, TicketView,
+    HistoricalTicket, ImportHistoryRequest, ListTicketsQuery, RecordResolutionRequest, Severity,
+    SubmitTicketRequest, TicketId, TicketStatus, TicketView,
 };
 use ticket_client::{Client, ClientError};
 use ticket_core::{
@@ -306,4 +306,50 @@ components = ["checkout"]
     ))
     .unwrap();
     assert!(build(&invalid).await.is_err());
+}
+
+#[tokio::test]
+async fn tickets_can_be_listed_and_filtered() {
+    let client = Client::new(spawn_server("").await).unwrap();
+    let first = client
+        .submit_ticket(&submit("Security breach on admin account", ""))
+        .await
+        .unwrap();
+    let mut other = submit("Invoice question", "");
+    other.client = ClientId::new("globex").unwrap();
+    let second = client.submit_ticket(&other).await.unwrap();
+    wait_for_triage(&client, first.id).await;
+    wait_for_triage(&client, second.id).await;
+
+    let all = client
+        .list_tickets(&ListTicketsQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        all.tickets.iter().map(|t| t.id).collect::<Vec<_>>(),
+        vec![second.id, first.id],
+        "newest first"
+    );
+
+    let acme = ListTicketsQuery {
+        client: Some(ClientId::new("acme").unwrap()),
+        ..ListTicketsQuery::default()
+    };
+    let listed = client.list_tickets(&acme).await.unwrap();
+    assert_eq!(listed.tickets.len(), 1);
+    assert_eq!(listed.tickets[0].id, first.id);
+
+    let escalated = ListTicketsQuery {
+        status: Some(TicketStatus::Escalated),
+        limit: Some(1),
+        ..ListTicketsQuery::default()
+    };
+    let listed = client.list_tickets(&escalated).await.unwrap();
+    assert_eq!(listed.tickets.len(), 1);
+    assert!(
+        listed
+            .tickets
+            .iter()
+            .all(|t| t.status == TicketStatus::Escalated)
+    );
 }

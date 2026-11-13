@@ -5,7 +5,7 @@ use ticket_core::ports::{KnowledgeBase, TicketRepository};
 use ticket_core::{
     Assignee, Category, Classification, ClientId, CodeContext, Embedding, Error, ExternalRef,
     KnowledgeEntry, Link, NewTicket, RepoId, Reporter, Resolution, RoutingDecision, Severity,
-    SeverityAssessment, Ticket, TicketId, TicketKind, TicketStatus, TriageReport,
+    SeverityAssessment, Ticket, TicketFilter, TicketId, TicketKind, TicketStatus, TriageReport,
 };
 use ticket_storage::{InMemoryStore, SqliteStore};
 
@@ -127,6 +127,28 @@ async fn ticket_repository_contract(store: &dyn TicketRepository) {
         1
     );
 
+    // Listing is newest first and filters by status and client.
+    let all = store.list(&TicketFilter::default()).await.unwrap();
+    assert_eq!(
+        all.iter().map(|t| t.id).collect::<Vec<_>>(),
+        vec![newer.id, older.id]
+    );
+    let limited = TicketFilter {
+        limit: 1,
+        ..TicketFilter::default()
+    };
+    assert_eq!(store.list(&limited).await.unwrap().len(), 1);
+    let other_client = TicketFilter {
+        client: Some(ClientId::new("globex").unwrap()),
+        ..TicketFilter::default()
+    };
+    assert!(store.list(&other_client).await.unwrap().is_empty());
+    let acme = TicketFilter {
+        client: Some(ClientId::new("acme").unwrap()),
+        ..TicketFilter::default()
+    };
+    assert_eq!(store.list(&acme).await.unwrap().len(), 2);
+
     // A claim succeeds once and only from an allowed state.
     let claim = [TicketStatus::Received, TicketStatus::Failed];
     assert!(
@@ -162,6 +184,20 @@ async fn ticket_repository_contract(store: &dyn TicketRepository) {
         .set_status(newer.id, TicketStatus::Escalated)
         .await
         .unwrap();
+    let escalated = TicketFilter {
+        status: Some(TicketStatus::Escalated),
+        ..TicketFilter::default()
+    };
+    assert_eq!(
+        store
+            .list(&escalated)
+            .await
+            .unwrap()
+            .iter()
+            .map(|t| t.id)
+            .collect::<Vec<_>>(),
+        vec![newer.id]
+    );
     assert!(matches!(
         store
             .set_status(TicketId::new(), TicketStatus::Failed)

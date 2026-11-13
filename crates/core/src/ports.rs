@@ -23,7 +23,8 @@ use async_trait::async_trait;
 use crate::{
     Assignee, BranchName, ChangeRequest, ChangeRequestRef, Classification, CommitId, Embedding,
     ExternalRef, FixOutcome, KnowledgeEntry, RepoSpec, Result, RoutingDecision, Severity,
-    Signature, SimilarTicket, Ticket, TicketId, TicketStatus, TriageReport, Workspace,
+    Signature, SimilarTicket, Ticket, TicketFilter, TicketId, TicketStatus, TriageReport,
+    Workspace,
 };
 
 /// Persistence for live tickets and their triage history.
@@ -53,6 +54,9 @@ pub trait TicketRepository: Send + Sync {
 
     /// Lists tickets with a given status, oldest first.
     async fn list_by_status(&self, status: TicketStatus, limit: u32) -> Result<Vec<Ticket>>;
+
+    /// Lists tickets matching `filter`, newest first.
+    async fn list(&self, filter: &TicketFilter) -> Result<Vec<Ticket>>;
 
     /// Appends a triage report.
     async fn save_triage(&self, report: &TriageReport) -> Result<()>;

@@ -1,7 +1,7 @@
 //! HTTP routes.
 
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Path, Request, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::header::AUTHORIZATION;
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
@@ -9,8 +9,9 @@ use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use ticket_api::{
-    HealthResponse, ImportHistoryRequest, ImportHistoryResponse, KnowledgeEntry,
-    RecordResolutionRequest, SubmitTicketRequest, SubmitTicketResponse, TicketId, TicketView,
+    HealthResponse, ImportHistoryRequest, ImportHistoryResponse, KnowledgeEntry, ListTicketsQuery,
+    RecordResolutionRequest, SubmitTicketRequest, SubmitTicketResponse, TicketId,
+    TicketListResponse, TicketView,
 };
 use ticket_core::{Error, Resolution};
 use ticket_jira::{JiraEvent, SIGNATURE_HEADER, parse_webhook, verify_signature};
@@ -28,6 +29,7 @@ const MAX_BODY_BYTES: usize = 1024 * 1024;
 /// ```text
 /// GET  /healthz
 /// POST /v1/tickets                       bearer token
+/// GET  /v1/tickets?status=&client=&limit= bearer token
 /// GET  /v1/tickets/{id}                  bearer token
 /// POST /v1/tickets/{id}/resolution       bearer token
 /// POST /v1/knowledge/import              bearer token
@@ -35,7 +37,7 @@ const MAX_BODY_BYTES: usize = 1024 * 1024;
 /// ```
 pub fn router(state: AppState) -> Router {
     let api = Router::new()
-        .route("/tickets", post(submit_ticket))
+        .route("/tickets", post(submit_ticket).get(list_tickets))
         .route("/tickets/{id}", get(get_ticket))
         .route("/tickets/{id}/resolution", post(record_resolution))
         .route("/knowledge/import", post(import_history))
@@ -75,6 +77,14 @@ async fn submit_ticket(
             duplicate: !ingested.created,
         }),
     ))
+}
+
+async fn list_tickets(
+    State(state): State<AppState>,
+    Query(query): Query<ListTicketsQuery>,
+) -> Result<Json<TicketListResponse>, ApiError> {
+    let tickets = state.pipeline.list_tickets(&query.to_filter()).await?;
+    Ok(Json(TicketListResponse { tickets }))
 }
 
 async fn get_ticket(

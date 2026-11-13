@@ -11,15 +11,15 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 pub use ticket_core::{
     Category, ClientId, CodeContext, ExternalRef, HistoricalTicket, KnowledgeEntry, Link,
-    NewTicket, RepoId, Reporter, Severity, Ticket, TicketId, TicketKind, TicketStatus,
-    TriageReport,
+    NewTicket, RepoId, Reporter, Severity, Ticket, TicketFilter, TicketId, TicketKind,
+    TicketStatus, TriageReport,
 };
 
 /// Route paths, relative to the server root.
 pub mod paths {
     /// Liveness and readiness probe.
     pub const HEALTH: &str = "/healthz";
-    /// Submit (`POST`) tickets.
+    /// Submit (`POST`) and list (`GET`) tickets.
     pub const TICKETS: &str = "/v1/tickets";
     /// Seed the knowledge base with resolved history.
     pub const KNOWLEDGE_IMPORT: &str = "/v1/knowledge/import";
@@ -142,6 +142,65 @@ pub struct SubmitTicketResponse {
     pub duplicate: bool,
 }
 
+/// Query string of `GET /v1/tickets`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListTicketsQuery {
+    /// Only tickets in this status.
+    #[serde(default)]
+    pub status: Option<TicketStatus>,
+    /// Only tickets of this client.
+    #[serde(default)]
+    pub client: Option<ClientId>,
+    /// Page size: default 50, at most 500.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+impl ListTicketsQuery {
+    /// The repository filter, with the limit defaulted and clamped.
+    #[must_use]
+    pub fn to_filter(&self) -> TicketFilter {
+        TicketFilter {
+            status: self.status,
+            client: self.client.clone(),
+            limit: self
+                .limit
+                .unwrap_or(TicketFilter::DEFAULT_LIMIT)
+                .clamp(1, TicketFilter::MAX_LIMIT),
+        }
+    }
+
+    /// Encodes the query as `?key=value&...`, or an empty string.
+    #[must_use]
+    pub fn to_query_string(&self) -> String {
+        // Every value is a status, a validated client id or a number, none of
+        // which need percent-encoding.
+        let mut parts = Vec::new();
+        if let Some(status) = self.status {
+            parts.push(format!("status={status}"));
+        }
+        if let Some(client) = &self.client {
+            parts.push(format!("client={client}"));
+        }
+        if let Some(limit) = self.limit {
+            parts.push(format!("limit={limit}"));
+        }
+        if parts.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", parts.join("&"))
+        }
+    }
+}
+
+/// Response to `GET /v1/tickets`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TicketListResponse {
+    /// Matching tickets, newest first.
+    pub tickets: Vec<Ticket>,
+}
+
 /// Response to `GET /v1/tickets/{id}`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TicketView {
@@ -257,6 +316,25 @@ mod tests {
         assert_eq!(
             legacy.reporter.unwrap().email.as_deref(),
             Some("jane@acme.test")
+        );
+    }
+
+    #[test]
+    fn list_query_clamps_and_encodes() {
+        let query = ListTicketsQuery {
+            status: Some(TicketStatus::Forwarded),
+            client: Some(ClientId::new("acme").unwrap()),
+            limit: Some(10_000),
+        };
+        assert_eq!(query.to_filter().limit, TicketFilter::MAX_LIMIT);
+        assert_eq!(
+            query.to_query_string(),
+            "?status=forwarded&client=acme&limit=10000"
+        );
+        assert_eq!(ListTicketsQuery::default().to_query_string(), "");
+        assert_eq!(
+            ListTicketsQuery::default().to_filter().limit,
+            TicketFilter::DEFAULT_LIMIT
         );
     }
 

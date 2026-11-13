@@ -12,7 +12,8 @@ use sqlx::{Row, Sqlite};
 use ticket_core::ports::{KnowledgeBase, TicketRepository};
 use ticket_core::{
     ClientId, CodeContext, Embedding, Error, ExternalRef, KnowledgeEntry, Link, Reporter,
-    Resolution, Result, SimilarTicket, Ticket, TicketId, TicketStatus, TriageReport, top_k,
+    Resolution, Result, SimilarTicket, Ticket, TicketFilter, TicketId, TicketStatus, TriageReport,
+    top_k,
 };
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
@@ -290,6 +291,25 @@ impl TicketRepository for SqliteStore {
         sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(status.as_str())
             .bind(i64::from(limit))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(Error::storage)?
+            .iter()
+            .map(ticket_from_row)
+            .collect()
+    }
+
+    async fn list(&self, filter: &TicketFilter) -> Result<Vec<Ticket>> {
+        // `? IS NULL OR ...` keeps the statement static while making each filter optional.
+        let sql = format!(
+            "SELECT {TICKET_COLUMNS} FROM tickets \
+             WHERE (?1 IS NULL OR status = ?1) AND (?2 IS NULL OR client_id = ?2) \
+             ORDER BY created_at DESC, id DESC LIMIT ?3"
+        );
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(filter.status.map(TicketStatus::as_str))
+            .bind(filter.client.as_ref().map(ClientId::as_str))
+            .bind(i64::from(filter.limit))
             .fetch_all(&self.pool)
             .await
             .map_err(Error::storage)?

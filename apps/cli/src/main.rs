@@ -8,7 +8,8 @@ use serde::Serialize;
 use ticket_client::Client;
 use ticket_client::api::{
     Category, ClientId, CodeContext, HistoricalTicket, ImportHistoryRequest, Link,
-    RecordResolutionRequest, RepoId, Reporter, Severity, SubmitTicketRequest, TicketId, TicketKind,
+    ListTicketsQuery, RecordResolutionRequest, RepoId, Reporter, Severity, SubmitTicketRequest,
+    Ticket, TicketId, TicketKind, TicketStatus,
 };
 
 #[derive(Debug, Parser)]
@@ -77,6 +78,21 @@ enum Command {
         #[arg(long = "link")]
         links: Vec<String>,
     },
+    /// List tickets, newest first.
+    List {
+        /// Only tickets in this status (received, forwarded, escalated, ...).
+        #[arg(long)]
+        status: Option<TicketStatus>,
+        /// Only tickets of this client.
+        #[arg(long)]
+        client: Option<ClientId>,
+        /// Maximum number of tickets (server caps at 500).
+        #[arg(long)]
+        limit: Option<u32>,
+        /// Print the raw JSON response instead of a table.
+        #[arg(long)]
+        json: bool,
+    },
     /// Show a ticket and its latest triage report.
     Get {
         /// Ticket id.
@@ -144,6 +160,25 @@ async fn main() -> anyhow::Result<()> {
             request.links = links.into_iter().map(Link::new).collect();
             print(&client.submit_ticket(&request).await?)
         }
+        Command::List {
+            status,
+            client: client_id,
+            limit,
+            json,
+        } => {
+            let query = ListTicketsQuery {
+                status,
+                client: client_id,
+                limit,
+            };
+            let response = client.list_tickets(&query).await?;
+            if json {
+                print(&response)
+            } else {
+                print_table(&response.tickets);
+                Ok(())
+            }
+        }
         Command::Get { id } => print(&client.get_ticket(id).await?),
         Command::Resolve {
             id,
@@ -176,6 +211,24 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
+fn print_table(tickets: &[Ticket]) {
+    println!(
+        "{:<36}  {:<13}  {:<15}  {:<8}  title",
+        "id", "status", "kind", "client"
+    );
+    for t in tickets {
+        println!(
+            "{:<36}  {:<13}  {:<15}  {:<8}  {}",
+            t.id,
+            t.status.as_str(),
+            t.kind.as_str(),
+            t.client.as_str(),
+            t.title
+        );
+    }
+    println!("({} tickets)", tickets.len());
+}
+
 fn print(value: &impl Serialize) -> anyhow::Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
@@ -190,6 +243,35 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn parses_list_filters() {
+        let cli = Cli::try_parse_from([
+            "ticket",
+            "list",
+            "--status",
+            "forwarded",
+            "--client",
+            "acme",
+            "--limit",
+            "5",
+        ])
+        .unwrap();
+        let Command::List {
+            status,
+            client,
+            limit,
+            json,
+        } = cli.command
+        else {
+            panic!("expected list");
+        };
+        assert_eq!(status, Some(TicketStatus::Forwarded));
+        assert_eq!(client.unwrap().as_str(), "acme");
+        assert_eq!(limit, Some(5));
+        assert!(!json);
+        assert!(Cli::try_parse_from(["ticket", "list", "--status", "bogus"]).is_err());
     }
 
     #[test]

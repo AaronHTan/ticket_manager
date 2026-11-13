@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use chrono::Utc;
 use ticket_core::ports::{KnowledgeBase, TicketRepository};
 use ticket_core::{
-    Embedding, Error, ExternalRef, KnowledgeEntry, Result, SimilarTicket, Ticket, TicketId,
-    TicketStatus, TriageReport, top_k,
+    Embedding, Error, ExternalRef, KnowledgeEntry, Result, SimilarTicket, Ticket, TicketFilter,
+    TicketId, TicketStatus, TriageReport, top_k,
 };
 
 /// A process-local store implementing both ports.
@@ -118,6 +118,20 @@ impl TicketRepository for InMemoryStore {
             .collect();
         tickets.sort_by_key(|t| (t.created_at, t.id));
         tickets.truncate(limit as usize);
+        Ok(tickets)
+    }
+
+    async fn list(&self, filter: &TicketFilter) -> Result<Vec<Ticket>> {
+        let state = self.read()?;
+        let mut tickets: Vec<_> = state
+            .tickets
+            .values()
+            .filter(|t| filter.status.is_none_or(|s| t.status == s))
+            .filter(|t| filter.client.as_ref().is_none_or(|c| &t.client == c))
+            .cloned()
+            .collect();
+        tickets.sort_by_key(|t| std::cmp::Reverse((t.created_at, t.id)));
+        tickets.truncate(filter.limit as usize);
         Ok(tickets)
     }
 

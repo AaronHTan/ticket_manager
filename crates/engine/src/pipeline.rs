@@ -6,7 +6,7 @@ use chrono::Utc;
 use ticket_core::ports::{Classifier, Embedder, KnowledgeBase, TicketRepository};
 use ticket_core::{
     Category, Error, ExternalRef, HistoricalTicket, KnowledgeEntry, MatchSummary, NewTicket,
-    Resolution, Result, Severity, Ticket, TicketId, TicketStatus, TriageReport,
+    Resolution, Result, Severity, Ticket, TicketFilter, TicketId, TicketStatus, TriageReport,
 };
 use tracing::{info, instrument, warn};
 
@@ -313,6 +313,11 @@ impl TriagePipeline {
         };
         let triage = self.deps.tickets.latest_triage(id).await?;
         Ok(Some((ticket, triage)))
+    }
+
+    /// Lists stored tickets, newest first.
+    pub async fn list_tickets(&self, filter: &TicketFilter) -> Result<Vec<Ticket>> {
+        self.deps.tickets.list(filter).await
     }
 
     /// Number of knowledge-base entries.
