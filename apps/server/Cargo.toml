@@ -13,10 +13,16 @@ path = "src/lib.rs"
 name = "ticket-server"
 path = "src/main.rs"
 
+[[bin]]
+name = "ticket-seed"
+path = "src/bin/ticket-seed.rs"
+
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+clap.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 ticket-api.workspace = true
 ticket-core.workspace = true
 ticket-engine.workspace = true
@@ -36,7 +42,7 @@ hex.workspace = true
 hmac.workspace = true
 reqwest.workspace = true
 sha2.workspace = true
-serde_json.workspace = true
+tempfile.workspace = true
 ticket-client.workspace = true
 
 [lints]

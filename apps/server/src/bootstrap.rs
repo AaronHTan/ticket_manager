@@ -31,35 +31,7 @@ pub struct App {
 
 /// Builds every adapter from configuration, wires the pipeline and starts workers.
 pub async fn build(config: &AppConfig) -> anyhow::Result<App> {
-    let (tickets, knowledge) = open_storage(&config.database.url).await?;
-
-    let embedder = Arc::new(HashingEmbedder::new(config.retrieval.embedding_dim)?);
-    let classifier = Arc::new(match &config.classifier.rules {
-        Some(rules) => RuleBasedClassifier::new(rules.clone()),
-        None => RuleBasedClassifier::default(),
-    });
-    let router = TicketRouter::new(config.routing.clone(), config.escalation.clone())
-        .context("invalid routing configuration")?;
-
-    let mut dispatcher = Dispatcher::new(Arc::new(LogNotifier));
-    for (name, jira) in &config.connectors.jira {
-        if jira.webhook_secret.is_none() {
-            warn!(connector = %name, "jira webhook_secret not set; webhooks are unauthenticated");
-        }
-        let client = JiraClient::new(name.clone(), jira.clone())
-            .with_context(|| format!("jira connector `{name}`"))?;
-        dispatcher = dispatcher.with_tracker(Arc::new(client));
-    }
-    info!(trackers = ?dispatcher.tracker_names().collect::<Vec<_>>(), "trackers registered");
-
-    let deps = PipelineDeps {
-        tickets,
-        knowledge,
-        embedder,
-        classifier,
-    };
-    let pipeline =
-        Arc::new(TriagePipeline::new(deps, router, dispatcher).with_top_k(config.retrieval.top_k));
+    let pipeline = build_pipeline(config).await?;
 
     let (queue, workers) = WorkerPool::spawn(
         Arc::clone(&pipeline),
@@ -89,6 +61,41 @@ pub async fn build(config: &AppConfig) -> anyhow::Result<App> {
     }
 
     Ok(App { state, workers })
+}
+
+/// Opens storage and wires the triage pipeline, without starting workers,
+/// recovery or HTTP. Used by [`build`] and by offline tools such as `ticket-seed`.
+pub async fn build_pipeline(config: &AppConfig) -> anyhow::Result<Arc<TriagePipeline>> {
+    let (tickets, knowledge) = open_storage(&config.database.url).await?;
+
+    let embedder = Arc::new(HashingEmbedder::new(config.retrieval.embedding_dim)?);
+    let classifier = Arc::new(match &config.classifier.rules {
+        Some(rules) => RuleBasedClassifier::new(rules.clone()),
+        None => RuleBasedClassifier::default(),
+    });
+    let router = TicketRouter::new(config.routing.clone(), config.escalation.clone())
+        .context("invalid routing configuration")?;
+
+    let mut dispatcher = Dispatcher::new(Arc::new(LogNotifier));
+    for (name, jira) in &config.connectors.jira {
+        if jira.webhook_secret.is_none() {
+            warn!(connector = %name, "jira webhook_secret not set; webhooks are unauthenticated");
+        }
+        let client = JiraClient::new(name.clone(), jira.clone())
+            .with_context(|| format!("jira connector `{name}`"))?;
+        dispatcher = dispatcher.with_tracker(Arc::new(client));
+    }
+    info!(trackers = ?dispatcher.tracker_names().collect::<Vec<_>>(), "trackers registered");
+
+    let deps = PipelineDeps {
+        tickets,
+        knowledge,
+        embedder,
+        classifier,
+    };
+    Ok(Arc::new(
+        TriagePipeline::new(deps, router, dispatcher).with_top_k(config.retrieval.top_k),
+    ))
 }
 
 /// Wires the code-change path. Git is only checked when repositories are
@@ -137,17 +144,44 @@ async fn open_storage(
     Ok((store.clone(), store))
 }
 
+/// The file path inside a SQLite URL such as `sqlite://data/app.db?mode=rwc`.
+/// `None` for non-SQLite URLs and for in-memory databases.
+#[must_use]
+pub fn sqlite_path(url: &str) -> Option<&Path> {
+    let rest = url
+        .strip_prefix("sqlite://")
+        .or_else(|| url.strip_prefix("sqlite:"))?;
+    let path = rest.split('?').next().unwrap_or(rest);
+    (!path.is_empty() && path != ":memory:").then(|| Path::new(path))
+}
+
 /// SQLite creates the file but not its directory.
 fn ensure_sqlite_parent_dir(url: &str) -> anyhow::Result<()> {
-    let path = url
-        .strip_prefix("sqlite://")
-        .or_else(|| url.strip_prefix("sqlite:"))
-        .map(|rest| rest.split('?').next().unwrap_or(rest));
-    if let Some(parent) = path.and_then(|p| Path::new(p).parent())
+    if let Some(parent) = sqlite_path(url).and_then(Path::parent)
         && !parent.as_os_str().is_empty()
     {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating database directory {}", parent.display()))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sqlite_path_extracts_file_paths_only() {
+        assert_eq!(
+            sqlite_path("sqlite://data/test.db"),
+            Some(Path::new("data/test.db"))
+        );
+        assert_eq!(
+            sqlite_path("sqlite:/tmp/x.db?mode=rwc"),
+            Some(Path::new("/tmp/x.db"))
+        );
+        assert_eq!(sqlite_path("sqlite::memory:"), None);
+        assert_eq!(sqlite_path("memory"), None);
+        assert_eq!(sqlite_path("postgres://db/x"), None);
+    }
 }

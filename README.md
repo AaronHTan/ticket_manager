@@ -79,6 +79,28 @@ with the same secret. The Jira issue type, components, reporter, creation
 time and an optional `repository_field` custom field are mapped onto the
 ticket.
 
+## Running against a test database
+
+`config/test.toml` points at `data/test.db` and port 18080. `ticket-seed`
+fills that database from `fixtures/`: 20 resolved tickets go into the
+knowledge base, and 10 incoming tickets are triaged through the real
+pipeline. Each fixture ticket records the status it should reach, so the
+seeder doubles as a routing regression check and exits non-zero on any
+mismatch.
+
+```bash
+cargo run -p ticket-server --bin ticket-seed -- --reset    # rebuild data/test.db from fixtures
+TICKET_HANDLER_CONFIG=config/test.toml cargo run -p ticket-server
+TICKET_HANDLER_URL=http://127.0.0.1:18080 cargo run -p ticket-cli -- health
+sqlite3 data/test.db "select status, count(*) from tickets group by status"
+```
+
+Re-running without `--reset` is a no-op. History is only imported into an
+empty knowledge base, and tickets are deduplicated by `external_ref`.
+`--reset` only deletes SQLite files whose name contains `test`, unless you
+pass `--force`. One fixture is left `received`, so starting the server
+shows recovery re-queuing and triaging it.
+
 ## Code changes
 
 Repositories the service may change are listed under `[repositories.<id>]`.
@@ -106,6 +128,8 @@ crates/api               HTTP request/response types (shared by server and SDK)
 crates/client            async Rust SDK for the HTTP API
 crates/connectors/jira   Jira Cloud webhook parser + Tracker implementation
 crates/vcs/git           SourceControl adapter over the git CLI (bare clone + worktrees)
-apps/server              axum service (composition root)
+apps/server              axum service (composition root) + `ticket-seed`
 apps/cli                 `ticket` command-line client
+config/test.toml         configuration for the seeded test database
+fixtures/                history + incoming tickets with expected routes (used by ticket-seed and tests)
 ```

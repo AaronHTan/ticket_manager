@@ -1,0 +1,48 @@
+# Configuration for running against the seeded test database.
+#
+#   cargo run -p ticket-server --bin ticket-seed -- --config config/test.toml --reset
+#   TICKET_HANDLER_CONFIG=config/test.toml cargo run -p ticket-server
+#
+# No Jira connectors and no repositories: dispatch only logs, and git is
+# never invoked. Routing thresholds are the defaults, so fixture outcomes
+# match production behaviour.
+
+[server]
+bind = "127.0.0.1:18080"
+workers = 2
+log_format = "pretty"
+
+[database]
+url = "sqlite://data/test.db"
+
+[retrieval]
+embedding_dim = 512
+top_k = 5
+
+[escalation.intermediate]
+name = "L2 Support"
+contact = "l2-support@example.test"
+
+[escalation.default_expert]
+name = "Platform On-Call"
+contact = "platform-oncall@example.test"
+
+[escalation.experts.security]
+name = "Security Team"
+contact = "security@example.test"
+
+[escalation.experts.database]
+name = "Database Team"
+contact = "dba@example.test"
+
+[escalation.experts.billing]
+name = "Billing Ops"
+contact = "billing-ops@example.test"
+
+[escalation.experts.authentication]
+name = "Identity Team"
+contact = "identity@example.test"
+
+[escalation.experts.performance]
+name = "Performance Team"
+contact = "perf@example.test"

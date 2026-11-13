@@ -1,0 +1,215 @@
+[
+  {
+    "ticket": {
+      "client": "acme",
+      "title": "Password reset email not received",
+      "description": "User requested a password reset but the reset email never arrived. Spam folder checked.",
+      "external_ref": {
+        "system": "fixtures",
+        "key": "FX-1"
+      },
+      "reporter": {
+        "name": "Jane Doe",
+        "email": "jane@acme.test"
+      },
+      "kind": "question",
+      "components": [
+        "auth"
+      ]
+    },
+    "expect": "auto_resolved"
+  },
+  {
+    "ticket": {
+      "client": "acme",
+      "title": "User cannot change display name",
+      "description": "The save button is disabled when a user tries to change their display name in profile settings.",
+      "external_ref": {
+        "system": "fixtures",
+        "key": "FX-2"
+      },
+      "reporter": "sam@acme.test",
+      "kind": "question",
+      "components": [
+        "profile"
+      ]
+    },
+    "expect": "auto_resolved"
+  },
+  {
+    "ticket": {
+      "client": "acme",
+      "title": "Duplicate charge on subscription invoice",
+      "description": "Customer was charged twice for the monthly subscription invoice again this month.",
+      "external_ref": {
+        "system": "fixtures",
+        "key": "FX-3"
+      },
+      "reporter": {
+        "name": "Priya Patel",
+        "email": "priya@acme.test",
+        "external_id": "crm-4411"
+      },
+      "kind": "bug",
+      "components": [
+        "billing"
+      ],
+      "severity": "medium"
+    },
+    "expect": "forwarded"
+  },
+  {
+    "ticket": {
+      "client": "acme",
+      "title": "Connection pool exhausted under load",
+      "description": "API returns 500 errors under load and logs show the database connection pool is exhausted again.",
+      "external_ref": {
+        "system": "fixtures",
+        "key": "FX-4"
+      },
+      "reporter": {
+        "name": "Jane Doe",
+        "email": "jane@acme.test"
+      },
+      "kind": "incident",
+      "components": [
+        "api"
+      ],
+      "links": [
+        {
+          "url": "https://logs.acme.test/api/2026-11-12",
+          "title": "API error logs"
+        }
+      ]
+    },
+    "expect": "forwarded"
+  },
+  {
+    "ticket": {
+      "client": "acme",
+      "title": "Possible unauthorized access to admin account",
+      "description": "Admin saw logins from an unknown country overnight and suspects a security breach.",
+      "external_ref": {
+        "system": "fixtures",
+        "key": "FX-5"
+      },
+      "reporter": {
+        "name": "Alex Kim",
+        "email": "alex@acme.test"
+      },
+      "kind": "incident",
+      "components": [
+        "auth"
+      ],
+      "severity": "high"
+    },
+    "expect": "escalated"
+  },
+  {
+    "ticket": {
+      "client": "acme",
+      "title": "Dark mode for the reporting page",
+      "description": "It would be great to have a dark theme option when viewing charts in the evening.",
+      "external_ref": {
+        "system": "fixtures",
+        "key": "FX-6"
+      },
+      "reporter": "Jordan",
+      "kind": "feature_request",
+      "components": [
+        "frontend"
+      ]
+    },
+    "expect": "escalated"
+  },
+  {
+    "ticket": {
+      "client": "acme",
+      "title": "Production down for all users",
+      "description": "Every page returns 503 since the 09:00 deploy; this is a full outage.",
+      "external_ref": {
+        "system": "fixtures",
+        "key": "FX-7"
+      },
+      "reporter": {
+        "name": "Jane Doe",
+        "email": "jane@acme.test"
+      },
+      "kind": "incident",
+      "severity": "critical",
+      "metadata": {
+        "deploy": "2026.11.12-0900"
+      }
+    },
+    "expect": "escalated"
+  },
+  {
+    "ticket": {
+      "client": "acme",
+      "title": "Update billing address on invoice",
+      "description": "Customer wants their new company address shown on future invoices.",
+      "external_ref": {
+        "system": "fixtures",
+        "key": "FX-8"
+      },
+      "reporter": "finance@acme.test",
+      "kind": "task",
+      "components": [
+        "billing"
+      ],
+      "severity": "high"
+    },
+    "expect": "forwarded"
+  },
+  {
+    "ticket": {
+      "client": "acme",
+      "title": "Checkout crashes with 500 when cart is empty",
+      "description": "Submitting checkout with an empty cart crashes with a 500 error and a stack trace in cart.total.",
+      "external_ref": {
+        "system": "fixtures",
+        "key": "FX-9"
+      },
+      "reporter": {
+        "name": "Jane Doe",
+        "email": "jane@acme.test"
+      },
+      "kind": "bug",
+      "components": [
+        "checkout"
+      ],
+      "code_context": {
+        "repository": "web-app",
+        "git_ref": "main",
+        "paths": [
+          "cart.py"
+        ],
+        "version": "3.1.0"
+      },
+      "links": [
+        {
+          "url": "https://sentry.acme.test/issues/981",
+          "title": "Sentry issue"
+        }
+      ]
+    },
+    "expect": "forwarded"
+  },
+  {
+    "ticket": {
+      "client": "acme",
+      "title": "Export to CSV button does nothing",
+      "description": "Clicking Export to CSV on the projects page has no effect in Firefox.",
+      "external_ref": {
+        "system": "fixtures",
+        "key": "FX-10"
+      },
+      "reporter": "sam@acme.test",
+      "kind": "bug",
+      "components": [
+        "frontend"
+      ]
+    },
+    "expect": "received"
+  }
+]

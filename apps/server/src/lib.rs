@@ -5,6 +5,7 @@ pub mod bootstrap;
 pub mod config;
 mod error;
 mod routes;
+pub mod seed;
 mod state;
 
 pub use bootstrap::{App, build};

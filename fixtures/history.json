@@ -1,0 +1,222 @@
+[
+  {
+    "title": "Password reset email not received",
+    "description": "User requested a password reset but the reset email never arrived. Spam folder checked.",
+    "category": "authentication",
+    "severity": "low",
+    "resolution": {
+      "summary": "Re-send the reset link from the admin console and ask the user to allow-list noreply@example.test.",
+      "automatable": true,
+      "resolved_by": "l2-support"
+    }
+  },
+  {
+    "title": "Account locked after failed login attempts",
+    "description": "User is locked out after entering the wrong password five times.",
+    "category": "authentication",
+    "severity": "low",
+    "resolution": {
+      "summary": "Unlock the account from the admin console and send the user a password reset link.",
+      "automatable": true,
+      "resolved_by": "l2-support"
+    }
+  },
+  {
+    "title": "MFA code not accepted",
+    "description": "Authenticator app codes are rejected at login even though they are freshly generated.",
+    "category": "authentication",
+    "severity": "medium",
+    "resolution": {
+      "summary": "Phone clock was out of sync; ask the user to enable automatic time, then re-enrol MFA if it persists.",
+      "automatable": false,
+      "resolved_by": "identity"
+    }
+  },
+  {
+    "title": "SSO login redirect loop",
+    "description": "Users signing in through Okta SSO are redirected back to the login page endlessly.",
+    "category": "authentication",
+    "severity": "medium",
+    "resolution": {
+      "summary": "Customer IdP certificate had rotated; update the SAML signing certificate in the tenant settings.",
+      "automatable": false,
+      "resolved_by": "identity"
+    }
+  },
+  {
+    "title": "Session expires too quickly",
+    "description": "Users are signed out after a few minutes of inactivity in the web app.",
+    "category": "authentication",
+    "severity": "low",
+    "resolution": {
+      "summary": "Raise the tenant idle session timeout from 5 to 30 minutes in security settings.",
+      "automatable": true,
+      "resolved_by": "l2-support"
+    }
+  },
+  {
+    "title": "Invoice shows duplicate charge",
+    "description": "Customer was charged twice for the monthly subscription invoice.",
+    "category": "billing",
+    "severity": "medium",
+    "resolution": {
+      "summary": "Void the duplicate invoice in the billing system and issue a refund to the original payment method.",
+      "automatable": false,
+      "resolved_by": "billing-ops"
+    }
+  },
+  {
+    "title": "Refund not received after cancellation",
+    "description": "Customer cancelled the subscription two weeks ago and has not received the promised refund.",
+    "category": "billing",
+    "severity": "medium",
+    "resolution": {
+      "summary": "Refund was stuck in the payment processor queue; re-submit it and confirm the transaction id with the customer.",
+      "automatable": false,
+      "resolved_by": "billing-ops"
+    }
+  },
+  {
+    "title": "Update billing address on invoice",
+    "description": "Customer wants their new company address shown on future invoices.",
+    "category": "billing",
+    "severity": "low",
+    "resolution": {
+      "summary": "Update the billing address in the account billing profile; it applies from the next invoice.",
+      "automatable": true,
+      "resolved_by": "l2-support"
+    }
+  },
+  {
+    "title": "Download past invoices as PDF",
+    "description": "Customer asks how to download invoices from previous months as PDF files.",
+    "category": "billing",
+    "severity": "low",
+    "resolution": {
+      "summary": "Invoices are under Settings, Billing, Invoice history; each row has a PDF download button.",
+      "automatable": true,
+      "resolved_by": "l2-support"
+    }
+  },
+  {
+    "title": "Database connection pool exhausted",
+    "description": "API returns 500 errors under load; logs show the database connection pool is exhausted.",
+    "category": "database",
+    "severity": "high",
+    "resolution": {
+      "summary": "Raise max pool size from 20 to 50 and fix the leaked connection in the report export job.",
+      "automatable": false,
+      "resolved_by": "dba"
+    }
+  },
+  {
+    "title": "Replication lag on read replica",
+    "description": "Reports show stale data; the read replica is several minutes behind the primary database.",
+    "category": "database",
+    "severity": "high",
+    "resolution": {
+      "summary": "Long-running analytics query was blocking replay; move it to the warehouse and add a statement timeout.",
+      "automatable": false,
+      "resolved_by": "dba"
+    }
+  },
+  {
+    "title": "Slow report export",
+    "description": "Exporting the quarterly report takes over five minutes and sometimes times out.",
+    "category": "performance",
+    "severity": "medium",
+    "resolution": {
+      "summary": "Add an index on reports(account_id, created_at) and stream the export instead of building it in memory.",
+      "automatable": false,
+      "resolved_by": "perf"
+    }
+  },
+  {
+    "title": "Dashboard loads slowly for large accounts",
+    "description": "The main dashboard takes 20 seconds to load for accounts with many projects.",
+    "category": "performance",
+    "severity": "medium",
+    "resolution": {
+      "summary": "Paginate the project list and cache the summary widgets for 60 seconds.",
+      "automatable": false,
+      "resolved_by": "perf"
+    }
+  },
+  {
+    "title": "Phishing email impersonating support",
+    "description": "Several users received an email pretending to be from our support team asking for their password.",
+    "category": "security",
+    "severity": "critical",
+    "resolution": {
+      "summary": "Reported the sending domain for takedown, published a customer notice and forced password resets for users who clicked.",
+      "automatable": false,
+      "resolved_by": "security"
+    }
+  },
+  {
+    "title": "API key leaked in public repository",
+    "description": "A customer API key was found committed to a public GitHub repository.",
+    "category": "security",
+    "severity": "critical",
+    "resolution": {
+      "summary": "Revoked the key, issued a new one, and audited API access logs for misuse.",
+      "automatable": false,
+      "resolved_by": "security"
+    }
+  },
+  {
+    "title": "Checkout returns 500 on empty cart",
+    "description": "Submitting checkout with an empty cart crashes with a 500 error and a stack trace.",
+    "category": "billing",
+    "severity": "high",
+    "resolution": {
+      "summary": "Guard against an empty cart in cart.total and return a validation error instead of crashing.",
+      "automatable": false,
+      "resolved_by": "web-team"
+    }
+  },
+  {
+    "title": "Mobile app crashes on startup after update",
+    "description": "After updating to the latest version the iOS app crashes immediately on launch.",
+    "category": "performance",
+    "severity": "high",
+    "resolution": {
+      "summary": "Corrupted cache from the previous version; shipped a hotfix that clears the cache on upgrade.",
+      "automatable": false,
+      "resolved_by": "mobile-team"
+    }
+  },
+  {
+    "title": "Email notifications delayed",
+    "description": "Notification emails arrive hours after the event that triggered them.",
+    "category": "performance",
+    "severity": "medium",
+    "resolution": {
+      "summary": "Email worker queue was backed up; scaled workers from 2 to 6 and added queue-depth alerting.",
+      "automatable": false,
+      "resolved_by": "platform"
+    }
+  },
+  {
+    "title": "CSV import fails with encoding error",
+    "description": "Importing a CSV file exported from Excel fails with an invalid UTF-8 error.",
+    "category": "billing",
+    "severity": "low",
+    "resolution": {
+      "summary": "Ask the user to export as CSV UTF-8 from Excel, or enable the Latin-1 option in the import dialog.",
+      "automatable": true,
+      "resolved_by": "l2-support"
+    }
+  },
+  {
+    "title": "User cannot change display name",
+    "description": "The save button is disabled when a user tries to change their display name in profile settings.",
+    "category": "authentication",
+    "severity": "low",
+    "resolution": {
+      "summary": "Display names are managed by the customer's SSO directory; ask their admin to change it there.",
+      "automatable": true,
+      "resolved_by": "l2-support"
+    }
+  }
+]
