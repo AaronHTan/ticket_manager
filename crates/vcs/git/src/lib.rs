@@ -270,6 +270,7 @@ impl GitCli {
 
     /// Clones `repo` if needed, points it at the configured remote and fetches.
     async fn sync_mirror(&self, repo: &RepoSpec) -> Result<PathBuf> {
+        let remote = resolve_remote(&repo.remote);
         for dir in [&self.cache_dir, &self.workspace_dir] {
             tokio::fs::create_dir_all(dir).await.map_err(|e| {
                 Error::Config(format!("creating git directory {}: {e}", dir.display()))
@@ -292,7 +293,7 @@ impl GitCli {
                     OsStr::new("--no-tags"),
                     OsStr::new("--quiet"),
                     OsStr::new("--"),
-                    OsStr::new(&repo.remote),
+                    OsStr::new(&remote),
                     partial.as_os_str(),
                 ],
                 &[],
@@ -317,7 +318,7 @@ impl GitCli {
         // Follow configuration changes to the remote URL.
         self.run(
             &mirror,
-            ["config", "remote.origin.url", repo.remote.as_str()],
+            ["config", "remote.origin.url", remote.as_str()],
             &[],
             "config remote url",
         )
@@ -553,6 +554,20 @@ impl SourceControl for GitCli {
     }
 }
 
+/// Makes a relative local path absolute, because git runs with the cache
+/// directory as its working directory. URLs and `host:path` remotes are
+/// returned unchanged, as are paths that do not exist locally.
+fn resolve_remote(remote: &str) -> String {
+    let path = Path::new(remote);
+    if path.is_relative()
+        && path.exists()
+        && let Ok(absolute) = std::path::absolute(path)
+    {
+        return absolute.to_string_lossy().into_owned();
+    }
+    remote.to_owned()
+}
+
 fn failure(what: &str, output: &Output) -> Error {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let mut stderr = stderr.trim().to_owned();
@@ -574,4 +589,25 @@ async fn remove_dir(path: &Path) -> Result<()> {
     tokio::fs::remove_dir_all(path)
         .await
         .map_err(|e| Error::upstream(SYSTEM, format!("removing {}: {e}", path.display())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relative_local_remotes_become_absolute() {
+        // The crate directory is the working directory for unit tests.
+        let resolved = resolve_remote("src");
+        assert!(Path::new(&resolved).is_absolute());
+        assert!(resolved.ends_with("src"));
+        for unchanged in [
+            "git@github.com:acme/web.git",
+            "https://git.test/acme/web.git",
+            "/srv/git/web.git",
+            "does/not/exist.git",
+        ] {
+            assert_eq!(resolve_remote(unchanged), unchanged);
+        }
+    }
 }

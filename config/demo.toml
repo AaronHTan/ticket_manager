@@ -1,0 +1,61 @@
+# Configuration for the end-to-end demo (scripts/demo.sh, docs/DEMO.md).
+#
+# Same triage setup as config/test.toml, plus one local git repository and
+# automatic fixes. Everything lives under data/demo/ and is safe to delete.
+
+[server]
+bind = "127.0.0.1:18081"
+workers = 2
+log_format = "pretty"
+
+[database]
+url = "sqlite://data/demo/demo.db"
+
+[retrieval]
+embedding_dim = 512
+top_k = 5
+
+[escalation.intermediate]
+name = "L2 Support"
+contact = "l2-support@example.test"
+
+[escalation.default_expert]
+name = "Platform On-Call"
+contact = "platform-oncall@example.test"
+
+[escalation.experts.security]
+name = "Security Team"
+contact = "security@example.test"
+
+[escalation.experts.database]
+name = "Database Team"
+contact = "dba@example.test"
+
+[escalation.experts.billing]
+name = "Billing Ops"
+contact = "billing-ops@example.test"
+
+[escalation.experts.authentication]
+name = "Identity Team"
+contact = "identity@example.test"
+
+[escalation.experts.performance]
+name = "Performance Team"
+contact = "perf@example.test"
+
+[git]
+cache_dir = "data/demo/repos"
+workspace_dir = "data/demo/workspaces"
+author_name = "ticket-handler (demo)"
+author_email = "ticket-handler@example.test"
+
+# A bare repository created by scripts/demo.sh from demo/repo. Relative
+# local paths are resolved from the directory the server is started in.
+[repositories.web-app]
+remote = "data/demo/remotes/web-app.git"
+default_branch = "main"
+clients = ["acme"]
+components = ["checkout", "cart"]
+
+[fixes]
+enabled = true

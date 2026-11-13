@@ -170,9 +170,10 @@
     "category": "billing",
     "severity": "high",
     "resolution": {
-      "summary": "Guard against an empty cart in cart.total and return a validation error instead of crashing.",
+      "summary": "Guard against a missing items list in cart.total so an empty cart totals 0 instead of crashing.",
       "automatable": false,
-      "resolved_by": "web-team"
+      "resolved_by": "web-team",
+      "patch": "diff --git a/cart.py b/cart.py\nindex 99fff60..a6359c7 100644\n--- a/cart.py\n+++ b/cart.py\n@@ -6,7 +6,7 @@ def total(items):\n \n     Each item is a dict with a unit ``price`` and a ``qty``.\n     \"\"\"\n-    return sum(item[\"price\"] * item[\"qty\"] for item in items)\n+    return sum(item[\"price\"] * item[\"qty\"] for item in items or [])\n \n \n def checkout(cart):\n"
     }
   },
   {

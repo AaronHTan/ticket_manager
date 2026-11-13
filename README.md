@@ -15,6 +15,10 @@ tickets fall into the first two buckets.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
 
+**Try it:** `./scripts/demo.sh` triages tickets against a seeded SQLite
+database and fixes a planted bug in a local git repository, end to end.
+[docs/DEMO.md](docs/DEMO.md) walks through each step.
+
 ## Requirements
 
 * Rust **1.99.1** (pinned in `rust-toolchain.toml`; `rustup` installs it automatically), edition 2024.
@@ -137,4 +141,7 @@ apps/server              axum service (composition root) + `ticket-seed`
 apps/cli                 `ticket` command-line client
 config/test.toml         configuration for the seeded test database
 fixtures/                history + incoming tickets with expected routes (used by ticket-seed and tests)
+demo/                    demo shop repository (with a planted bug) and demo ticket set
+config/demo.toml         configuration for the demo (fixes enabled, local repository)
+scripts/demo.sh          the end-to-end demo
 ```

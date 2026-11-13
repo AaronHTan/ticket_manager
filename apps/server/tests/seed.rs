@@ -129,3 +129,103 @@ fn fixture_tickets_must_be_idempotent() {
     .unwrap();
     assert!(load_tickets(&path).is_err());
 }
+
+/// Runs `git` for fixture setup, with a fixed identity and no user config.
+fn git(cwd: &Path, args: &[&str]) {
+    let status = std::process::Command::new("git")
+        .current_dir(cwd)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "demo")
+        .env("GIT_AUTHOR_EMAIL", "demo@example.test")
+        .env("GIT_COMMITTER_NAME", "demo")
+        .env("GIT_COMMITTER_EMAIL", "demo@example.test")
+        .status()
+        .expect("git is installed");
+    assert!(status.success(), "git {args:?} failed");
+}
+
+/// The demo (`scripts/demo.sh`) stays correct: with `config/demo.toml` and a
+/// repository made from `demo/repo`, FX-9 gets a proposed fix whose branch
+/// contains the patched `cart.py`.
+#[tokio::test]
+async fn demo_fixtures_propose_a_fix_for_the_checkout_crash() {
+    let dir = TempDir::new().unwrap();
+    let root = repo_root();
+
+    // The same bare remote the demo script builds.
+    let remote = dir.path().join("web-app.git");
+    let work = dir.path().join("work");
+    std::fs::create_dir(&work).unwrap();
+    for file in std::fs::read_dir(root.join("demo/repo")).unwrap() {
+        let file = file.unwrap();
+        std::fs::copy(file.path(), work.join(file.file_name())).unwrap();
+    }
+    git(&work, &["init", "--quiet", "--initial-branch=main"]);
+    git(&work, &["add", "--all"]);
+    git(&work, &["commit", "--quiet", "-m", "Initial shop"]);
+    git(
+        dir.path(),
+        &[
+            "init",
+            "--quiet",
+            "--bare",
+            "--initial-branch=main",
+            remote.to_str().unwrap(),
+        ],
+    );
+    git(
+        &work,
+        &["push", "--quiet", remote.to_str().unwrap(), "main"],
+    );
+
+    let raw = std::fs::read_to_string(root.join("config/demo.toml")).unwrap();
+    let mut config = AppConfig::from_toml(&raw).unwrap();
+    config.database.url = format!("sqlite://{}", dir.path().join("demo.db").display());
+    config.git.cache_dir = dir.path().join("repos");
+    config.git.workspace_dir = dir.path().join("workspaces");
+    let web_app = ticket_core::RepoId::new("web-app").unwrap();
+    config.repositories.get_mut(&web_app).unwrap().remote = remote.to_str().unwrap().to_owned();
+
+    let pipeline = build_pipeline(&config).await.unwrap();
+    let report = seed(
+        &pipeline,
+        load_history(&root.join("fixtures/history.json")).unwrap(),
+        load_tickets(&root.join("demo/tickets.json")).unwrap(),
+    )
+    .await
+    .unwrap();
+    let failures: Vec<_> = report
+        .mismatches()
+        .map(|t| {
+            format!(
+                "{}: expected {} / {:?}, got {} / {}",
+                t.key,
+                t.expected,
+                t.expected_fix,
+                t.actual,
+                t.fix_label()
+            )
+        })
+        .collect();
+    assert!(failures.is_empty(), "{failures:#?}");
+
+    let fx9 = report.tickets.iter().find(|t| t.key == "FX-9").unwrap();
+    let Some(ticket_core::FixResult::Proposed { branch, .. }) = &fx9.fix else {
+        panic!("FX-9 should have a proposed fix");
+    };
+    let shown = std::process::Command::new("git")
+        .args(["--git-dir", remote.to_str().unwrap(), "show"])
+        .arg(format!("refs/heads/{branch}:cart.py"))
+        .output()
+        .unwrap();
+    let cart = String::from_utf8(shown.stdout).unwrap();
+    assert!(cart.contains("for item in items or []"), "{cart}");
+    // No workspace is left behind.
+    assert_eq!(
+        std::fs::read_dir(dir.path().join("workspaces"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
