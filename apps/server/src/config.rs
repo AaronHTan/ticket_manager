@@ -16,6 +16,12 @@ use ticket_jira::JiraConfig;
 /// `TICKET_HANDLER_SERVER__BIND=0.0.0.0:9000`.
 pub const ENV_PREFIX: &str = "TICKET_HANDLER_";
 
+/// Variables that share [`ENV_PREFIX`] but are not configuration keys:
+/// `TICKET_HANDLER_CONFIG` selects the file, and `TICKET_HANDLER_URL` and
+/// `TICKET_HANDLER_TOKEN` belong to the `ticket` CLI. Without this list they
+/// would be read as unknown top-level keys and fail start-up.
+const NON_CONFIG_VARS: &[&str] = &["config", "url", "token"];
+
 /// Root configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -52,7 +58,11 @@ impl AppConfig {
     pub fn load(path: &Path) -> Result<Self, Box<figment::Error>> {
         Figment::new()
             .merge(Toml::file_exact(path))
-            .merge(Env::prefixed(ENV_PREFIX).split("__"))
+            .merge(
+                Env::prefixed(ENV_PREFIX)
+                    .ignore(NON_CONFIG_VARS)
+                    .split("__"),
+            )
             .extract()
             .map_err(Box::new)
     }
@@ -148,4 +158,45 @@ pub struct ClassifierConfig {
 pub struct ConnectorsConfig {
     /// Jira Cloud sites.
     pub jira: BTreeMap<String, JiraConfig>,
+}
+
+#[cfg(test)]
+mod tests {
+    use figment::Jail;
+
+    use super::*;
+
+    #[test]
+    #[expect(
+        clippy::result_large_err,
+        reason = "figment::Jail fixes the closure's error type"
+    )]
+    fn env_overrides_apply_and_non_config_variables_are_ignored() {
+        Jail::expect_with(|jail| {
+            jail.create_file(
+                "app.toml",
+                r#"
+                [database]
+                url = "sqlite://data/app.db"
+                [escalation.intermediate]
+                name = "L2"
+                [escalation.default_expert]
+                name = "On-call"
+                "#,
+            )?;
+            jail.set_env("TICKET_HANDLER_CONFIG", "app.toml");
+            jail.set_env("TICKET_HANDLER_URL", "http://127.0.0.1:8080");
+            jail.set_env("TICKET_HANDLER_TOKEN", "secret");
+            jail.set_env("TICKET_HANDLER_DATABASE__URL", "sqlite://data/test.db");
+
+            let config = AppConfig::load(Path::new("app.toml")).map_err(|e| e.to_string())?;
+            assert_eq!(config.database.url, "sqlite://data/test.db");
+            assert_eq!(config.server.api_token, None);
+
+            // A genuinely unknown key still fails loudly.
+            jail.set_env("TICKET_HANDLER_BOGUS", "1");
+            assert!(AppConfig::load(Path::new("app.toml")).is_err());
+            Ok(())
+        });
+    }
 }
