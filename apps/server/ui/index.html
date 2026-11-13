@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ticket Handler Demo</title>
+  <link rel="stylesheet" href="/ui/style.css">
+  <script src="/ui/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">TH</span>
+      <div>
+        <h1>Ticket Handler</h1>
+        <p class="muted">Triage by precedent, fixes by precedent</p>
+      </div>
+    </div>
+    <div id="server-info" class="chips" aria-label="Server status"></div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <section class="card" aria-labelledby="new-ticket-title">
+        <div class="card-head">
+          <h2 id="new-ticket-title">1. Create a ticket</h2>
+        </div>
+        <form id="new-ticket" class="form" autocomplete="off">
+          <label class="field">
+            <span>Start from an example</span>
+            <select id="example"></select>
+          </label>
+          <p id="example-hint" class="hint"></p>
+          <label class="field">
+            <span>Title <em>required</em></span>
+            <input name="title" required maxlength="512" placeholder="What went wrong?">
+          </label>
+          <label class="field">
+            <span>Description</span>
+            <textarea name="description" rows="3" placeholder="Steps, errors, impact"></textarea>
+          </label>
+          <div class="row">
+            <label class="field">
+              <span>Kind</span>
+              <select name="kind">
+                <option value="bug">Bug</option>
+                <option value="incident">Incident</option>
+                <option value="question">Question</option>
+                <option value="feature_request">Feature request</option>
+                <option value="task">Task</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Reported severity</span>
+              <select name="severity">
+                <option value="">Not given</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <label class="field">
+              <span>Components</span>
+              <input name="components" placeholder="checkout, cart">
+            </label>
+            <label class="field">
+              <span>Repository</span>
+              <select name="repository"><option value="">Not given</option></select>
+            </label>
+          </div>
+          <div class="row">
+            <label class="field">
+              <span>Reporter</span>
+              <input name="reporter" placeholder="name or email">
+            </label>
+            <label class="field">
+              <span>Client</span>
+              <input name="client" value="acme" required pattern="[A-Za-z0-9._\-]{1,128}">
+            </label>
+          </div>
+          <button type="submit" class="primary">Create ticket</button>
+        </form>
+      </section>
+
+      <section class="card" aria-labelledby="tickets-title">
+        <div class="card-head">
+          <h2 id="tickets-title">Tickets</h2>
+          <button type="button" id="refresh" class="ghost small">Refresh</button>
+        </div>
+        <ul id="ticket-list" class="ticket-list" aria-live="polite"></ul>
+      </section>
+    </aside>
+
+    <section id="detail" class="detail" aria-live="polite"></section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

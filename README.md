@@ -15,9 +15,10 @@ tickets fall into the first two buckets.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
 
-**Try it:** `./scripts/demo.sh` triages tickets against a seeded SQLite
-database and fixes a planted bug in a local git repository, end to end.
-[docs/DEMO.md](docs/DEMO.md) walks through each step.
+**Try it:** `./scripts/demo.sh` starts the service with a seeded knowledge
+base and opens a web page where you create a ticket and step it through
+triage, an automatic code fix (pushed to a local git repository) and
+resolution. [docs/DEMO.md](docs/DEMO.md) walks through it.
 
 ## Requirements
 
@@ -50,10 +51,13 @@ The CLI binary is called `ticket`. It reads `TICKET_HANDLER_URL` and `TICKET_HAN
 
 | Method | Path                               | Auth           | Purpose                              |
 |--------|------------------------------------|----------------|--------------------------------------|
-| GET    | `/healthz`                         | none           | Liveness and knowledge-base size     |
+| GET    | `/`                                | none           | Demo web UI (static, no data)        |
+| GET    | `/healthz`                         | none           | Liveness, mode and knowledge-base size |
 | POST   | `/v1/tickets`                      | bearer token   | Submit a ticket (`202 Accepted`)     |
 | GET    | `/v1/tickets?status=&client=&limit=` | bearer token | List tickets, newest first         |
-| GET    | `/v1/tickets/{id}`                 | bearer token   | Ticket and latest triage report      |
+| GET    | `/v1/tickets/{id}`                 | bearer token   | Ticket, triage report and fix attempt |
+| POST   | `/v1/tickets/{id}/triage`          | bearer token   | Triage now (step-by-step mode)       |
+| POST   | `/v1/tickets/{id}/fix`             | bearer token   | Attempt a code fix now (409 says why not) |
 | POST   | `/v1/tickets/{id}/resolution`      | bearer token   | Record a human fix (learning loop)   |
 | POST   | `/v1/knowledge/import`             | bearer token   | Seed the knowledge base              |
 | POST   | `/v1/webhooks/jira/{connector}`    | HMAC signature | Jira webhook receiver                |
@@ -142,6 +146,7 @@ apps/cli                 `ticket` command-line client
 config/test.toml         configuration for the seeded test database
 fixtures/                history + incoming tickets with expected routes (used by ticket-seed and tests)
 demo/                    demo shop repository (with a planted bug) and demo ticket set
-config/demo.toml         configuration for the demo (fixes enabled, local repository)
-scripts/demo.sh          the end-to-end demo
+config/demo.toml         configuration for the demo (step-by-step, fixes on, local repository)
+scripts/demo.sh          starts the browser demo
+apps/server/ui/          the demo web UI (plain HTML/CSS/JS, compiled into the server)
 ```

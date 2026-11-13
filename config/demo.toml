@@ -1,4 +1,4 @@
-# Configuration for the end-to-end demo (scripts/demo.sh, docs/DEMO.md).
+# Configuration for the browser demo (scripts/demo.sh, docs/DEMO.md).
 #
 # Same triage setup as config/test.toml, plus one local git repository and
 # automatic fixes. Everything lives under data/demo/ and is safe to delete.
@@ -7,6 +7,9 @@
 bind = "127.0.0.1:18081"
 workers = 2
 log_format = "pretty"
+# Step-by-step: new tickets wait in `received` until you run triage, and
+# fixes run only when you ask (UI buttons, or `ticket triage` / `ticket fix`).
+auto_triage = false
 
 [database]
 url = "sqlite://data/demo/demo.db"

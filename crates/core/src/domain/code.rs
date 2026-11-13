@@ -364,6 +364,10 @@ pub enum FixResult {
         change_request: ChangeRequestRef,
         /// The fixer's explanation.
         summary: String,
+        /// The change as a unified diff against the base branch (truncated
+        /// to [`FixResult::MAX_DIFF_LEN`]).
+        #[serde(default)]
+        diff: String,
     },
     /// The attempt failed (git, fixer or code host error).
     Failed {
@@ -373,6 +377,9 @@ pub enum FixResult {
 }
 
 impl FixResult {
+    /// Largest diff kept with a proposed fix, in bytes.
+    pub const MAX_DIFF_LEN: usize = 64 * 1024;
+
     /// Stable short name: `no_repository`, `no_changes`, `proposed` or `failed`.
     #[must_use]
     pub const fn kind(&self) -> &'static str {
@@ -529,6 +536,7 @@ mod tests {
                     url: None,
                 },
                 summary: "guarded".into(),
+                diff: "--- a/x\n+++ b/x\n".into(),
             },
             attempted_at: Utc::now(),
         };

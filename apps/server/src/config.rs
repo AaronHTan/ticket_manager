@@ -92,6 +92,11 @@ pub struct ServerConfig {
     pub api_token: Option<String>,
     /// Log output format.
     pub log_format: LogFormat,
+    /// Triage new tickets automatically. When `false`, tickets stay
+    /// `received` until `POST /v1/tickets/{id}/triage` is called, and fixes
+    /// only run on `POST /v1/tickets/{id}/fix`. Used to step through the
+    /// pipeline in the demo.
+    pub auto_triage: bool,
 }
 
 impl Default for ServerConfig {
@@ -102,6 +107,7 @@ impl Default for ServerConfig {
             queue_capacity: 1024,
             api_token: None,
             log_format: LogFormat::Pretty,
+            auto_triage: true,
         }
     }
 }

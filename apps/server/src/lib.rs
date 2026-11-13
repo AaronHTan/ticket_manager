@@ -7,6 +7,7 @@ mod error;
 mod routes;
 pub mod seed;
 mod state;
+mod ui;
 
 pub use bootstrap::{App, build};
 pub use config::AppConfig;

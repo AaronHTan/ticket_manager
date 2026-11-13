@@ -44,7 +44,11 @@ pub async fn build(config: &AppConfig) -> anyhow::Result<App> {
         queue,
         jira: Arc::new(config.connectors.jira.clone()),
         api_token: config.server.api_token.as_deref().map(Arc::from),
+        auto_triage: config.server.auto_triage,
     };
+    if !config.server.auto_triage {
+        info!("automatic triage is off; tickets wait for POST /v1/tickets/{{id}}/triage");
+    }
 
     let pending = pipeline.recover(RECOVERY_LIMIT).await?;
     if !pending.is_empty() {

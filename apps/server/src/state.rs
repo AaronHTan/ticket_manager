@@ -17,6 +17,8 @@ pub struct AppState {
     pub jira: Arc<BTreeMap<String, JiraConfig>>,
     /// Bearer token protecting the `/v1` API, if configured.
     pub api_token: Option<Arc<str>>,
+    /// Whether new tickets are triaged (and fixed) automatically.
+    pub auto_triage: bool,
 }
 
 impl AppState {
@@ -24,7 +26,13 @@ impl AppState {
     ///
     /// The ticket is already persisted as `received`, so a deferred ticket is
     /// not lost. It is picked up by [`TriagePipeline::recover`] on restart.
+    ///
+    /// Does nothing when automatic triage is off: the ticket then waits for
+    /// an explicit `POST /v1/tickets/{id}/triage`.
     pub fn enqueue(&self, id: TicketId) {
+        if !self.auto_triage {
+            return;
+        }
         if let Err(error) = self.queue.try_enqueue(id) {
             warn!(ticket = %id, %error, "could not queue ticket; it remains `received`");
         }

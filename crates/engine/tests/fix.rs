@@ -187,6 +187,7 @@ async fn fix_is_committed_pushed_and_proposed() {
         commit,
         change_request,
         summary,
+        diff,
     } = coordinator.run(&t).await.unwrap()
     else {
         panic!("expected a proposed fix");
@@ -194,6 +195,7 @@ async fn fix_is_committed_pushed_and_proposed() {
     assert_eq!(repo.as_str(), "shop");
     assert_eq!(branch.as_str(), format!("ticket/{}", t.id));
     assert_eq!(summary, "Treat a missing cart as empty.");
+    assert!(diff.contains("+    return sum(items or [])"), "{diff}");
     assert_eq!(
         change_request.url.as_deref(),
         Some("https://git.test/acme/shop/pull/42")

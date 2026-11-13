@@ -98,6 +98,16 @@ enum Command {
         /// Ticket id.
         id: TicketId,
     },
+    /// Triage a ticket now (for servers with `auto_triage = false`).
+    Triage {
+        /// Ticket id.
+        id: TicketId,
+    },
+    /// Attempt a code fix for a triaged ticket now.
+    Fix {
+        /// Ticket id.
+        id: TicketId,
+    },
     /// Record how a ticket was resolved, teaching the knowledge base.
     Resolve {
         /// Ticket id.
@@ -183,6 +193,8 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Command::Get { id } => print(&client.get_ticket(id).await?),
+        Command::Triage { id } => print(&client.triage_ticket(id).await?),
+        Command::Fix { id } => print(&client.fix_ticket(id).await?),
         Command::Resolve {
             id,
             summary,

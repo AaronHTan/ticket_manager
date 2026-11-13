@@ -223,12 +223,15 @@ async fn similar_bug_gets_the_learned_patch_pushed_for_review() {
         branch,
         commit,
         summary,
+        diff,
         ..
     } = attempt.result
     else {
         panic!("expected a proposed fix, got {:?}", attempt.result);
     };
     assert_eq!(repo.as_str(), "shop");
+    assert!(diff.contains("+    return sum(items or [])"), "{diff}");
+    assert!(diff.contains("-    return sum(items)"), "{diff}");
     assert!(
         summary.contains("Checkout returns 500 on empty cart"),
         "{summary}"
@@ -289,4 +292,34 @@ async fn patch_that_no_longer_applies_is_recorded_as_no_changes() {
         ),
         "refs/heads/main"
     );
+}
+
+#[tokio::test]
+async fn fix_step_can_be_run_on_demand_and_explains_refusals() {
+    let h = harness(BUGGY).await;
+
+    let question = h
+        .pipeline
+        .ingest(checkout_crash(TicketKind::Question, "SHOP-20"))
+        .await
+        .unwrap()
+        .ticket;
+    let early = h.pipeline.fix_ticket(question.id).await.unwrap_err();
+    assert!(early.to_string().contains("triage the ticket"), "{early}");
+    h.pipeline.triage_only(question.id).await.unwrap();
+    let refused = h.pipeline.fix_ticket(question.id).await.unwrap_err();
+    assert!(refused.to_string().contains("kind `question`"), "{refused}");
+
+    // triage_only never runs the fix, even for an eligible ticket.
+    let bug = h
+        .pipeline
+        .ingest(checkout_crash(TicketKind::Bug, "SHOP-21"))
+        .await
+        .unwrap()
+        .ticket;
+    h.pipeline.triage_only(bug.id).await.unwrap();
+    assert_eq!(h.pipeline.latest_fix(bug.id).await.unwrap(), None);
+    let attempt = h.pipeline.fix_ticket(bug.id).await.unwrap();
+    assert_eq!(attempt.result.kind(), "proposed");
+    assert_eq!(h.pipeline.latest_fix(bug.id).await.unwrap(), Some(attempt));
 }

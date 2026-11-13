@@ -244,6 +244,7 @@ async fn ticket_repository_contract(store: &dyn TicketRepository) {
                 url: Some("https://git.test/pr/42".into()),
             },
             summary: "guard empty cart".into(),
+            diff: String::new(),
         },
         attempted_at: Utc::now(),
     };

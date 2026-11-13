@@ -235,10 +235,27 @@ neighbours by cosine similarity.
 * Startup fails if repositories are configured but `git --version` cannot
   run. With no repositories configured, git is never invoked.
 
+### Step-by-step mode
+
+With `server.auto_triage = false`, submitted tickets are stored but not
+queued, and recovered tickets are not re-queued at start-up. Each step then
+runs on request:
+
+* `POST /v1/tickets/{id}/triage` runs `TriagePipeline::triage_only`: claim,
+  triage, dispatch and status, without the fix step.
+* `POST /v1/tickets/{id}/fix` runs `TriagePipeline::fix_ticket`. It returns
+  `409` with the reason when the ticket is not triaged yet or `FixPolicy::check`
+  rules it out.
+
+The demo UI (`apps/server/ui/`, served at `/`) is built on these two calls.
+It is static HTML, CSS and JavaScript compiled into the binary, served with
+a strict same-origin Content-Security-Policy, and it uses only the public `/v1` API.
+
 ### When fixes run
 
-`TriagePipeline::process` calls `FixCoordinator::run` after the triage status
-is saved, inline in the same worker, when `FixPolicy::eligible` holds:
+In the default automatic mode, `TriagePipeline::process` calls
+`FixCoordinator::run` after the triage status is saved, inline in the same
+worker, when `FixPolicy::eligible` holds:
 
 * `[fixes].enabled` is set;
 * the ticket `kind` is listed (default: bug, incident);

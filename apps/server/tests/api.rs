@@ -358,3 +358,78 @@ async fn tickets_can_be_listed_and_filtered() {
             .all(|t| t.ticket.status == TicketStatus::Escalated)
     );
 }
+
+#[tokio::test]
+async fn step_by_step_mode_waits_for_explicit_triage_and_fix() {
+    let client = Client::new(spawn_server("[server]\nauto_triage = false\n").await).unwrap();
+    let health = client.health().await.unwrap();
+    assert!(!health.auto_triage);
+    assert!(!health.fixes_enabled);
+
+    let receipt = client
+        .submit_ticket(&submit("Security breach on admin account", ""))
+        .await
+        .unwrap();
+    // Nothing happens on its own.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let view = client.get_ticket(receipt.id).await.unwrap();
+    assert_eq!(view.ticket.status, TicketStatus::Received);
+    assert!(view.triage.is_none());
+
+    // Fixing before triage is refused with a reason.
+    let early = client.fix_ticket(receipt.id).await.unwrap_err();
+    assert!(
+        matches!(early, ClientError::Api { status: 409, ref message, .. } if message.contains("triage")),
+        "{early:?}"
+    );
+
+    let triaged = client.triage_ticket(receipt.id).await.unwrap();
+    assert_eq!(triaged.ticket.status, TicketStatus::Escalated);
+    assert!(triaged.triage.is_some());
+    assert!(triaged.fix.is_none(), "triage alone never fixes");
+    // Triage is idempotent.
+    let again = client.triage_ticket(receipt.id).await.unwrap();
+    assert_eq!(again.triage, triaged.triage);
+
+    // Fixes are disabled in this configuration, and the refusal says so.
+    let refused = client.fix_ticket(receipt.id).await.unwrap_err();
+    assert!(
+        matches!(refused, ClientError::Api { status: 409, ref message, .. } if message.contains("disabled")),
+        "{refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn demo_ui_is_served_with_a_strict_content_security_policy() {
+    let base = spawn_server("").await;
+    let http = reqwest::Client::new();
+
+    let page = http.get(format!("{base}/")).send().await.unwrap();
+    assert_eq!(page.status(), 200);
+    let headers = page.headers().clone();
+    assert!(
+        headers["content-type"]
+            .to_str()
+            .unwrap()
+            .starts_with("text/html")
+    );
+    let csp = headers["content-security-policy"].to_str().unwrap();
+    assert!(csp.contains("default-src 'none'") && csp.contains("script-src 'self'"));
+    let html = page.text().await.unwrap();
+    assert!(html.contains("/ui/app.js") && html.contains("/ui/style.css"));
+
+    for (path, kind) in [
+        ("/ui/app.js", "text/javascript"),
+        ("/ui/style.css", "text/css"),
+    ] {
+        let asset = http.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(asset.status(), 200, "{path}");
+        assert!(
+            asset.headers()["content-type"]
+                .to_str()
+                .unwrap()
+                .starts_with(kind),
+            "{path}"
+        );
+    }
+}

@@ -111,6 +111,18 @@ impl Client {
             .await
     }
 
+    /// `POST /v1/tickets/{id}/triage`
+    pub async fn triage_ticket(&self, id: TicketId) -> Result<TicketView, ClientError> {
+        self.execute(self.request(Method::POST, &paths::ticket_triage(id)))
+            .await
+    }
+
+    /// `POST /v1/tickets/{id}/fix`
+    pub async fn fix_ticket(&self, id: TicketId) -> Result<TicketView, ClientError> {
+        self.execute(self.request(Method::POST, &paths::ticket_fix(id)))
+            .await
+    }
+
     /// `POST /v1/tickets/{id}/resolution`
     pub async fn record_resolution(
         &self,

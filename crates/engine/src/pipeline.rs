@@ -132,6 +132,27 @@ impl TriagePipeline {
     /// claim, and the others get the existing report or a conflict.
     #[instrument(skip(self))]
     pub async fn process(&self, id: TicketId) -> Result<TriageReport> {
+        let (report, newly_triaged) = self.claim_and_triage(id).await?;
+        if let Some(ticket) = newly_triaged
+            && let Some((_, policy)) = &self.fixes
+            && policy.eligible(&ticket, &report)
+        {
+            self.run_fix(&ticket).await;
+        }
+        Ok(report)
+    }
+
+    /// Claims, triages and dispatches one ticket, without the fix step.
+    ///
+    /// Used to step through the pipeline by hand: [`fix_ticket`](Self::fix_ticket)
+    /// is then a separate, explicit step.
+    pub async fn triage_only(&self, id: TicketId) -> Result<TriageReport> {
+        self.claim_and_triage(id).await.map(|(report, _)| report)
+    }
+
+    /// Returns the triage report, plus the ticket if this call triaged it
+    /// (as opposed to returning an earlier report).
+    async fn claim_and_triage(&self, id: TicketId) -> Result<(TriageReport, Option<Ticket>)> {
         let tickets = &self.deps.tickets;
         if tickets.get(id).await?.is_none() {
             return Err(Error::NotFound(format!("ticket {id}")));
@@ -144,10 +165,11 @@ impl TriagePipeline {
             )
             .await?;
         if !claimed {
-            return tickets
+            let report = tickets
                 .latest_triage(id)
                 .await?
-                .ok_or_else(|| Error::Conflict(format!("ticket {id} is already being triaged")));
+                .ok_or_else(|| Error::Conflict(format!("ticket {id} is already being triaged")))?;
+            return Ok((report, None));
         }
 
         // Re-read after claiming so we act on the latest state.
@@ -169,8 +191,7 @@ impl TriagePipeline {
                 let status = report.decision.resulting_status();
                 tickets.set_status(id, status).await?;
                 info!(%status, severity = %report.classification.severity.severity, "ticket triaged");
-                self.attempt_fix(&ticket, &report).await;
-                Ok(report)
+                Ok((report, Some(ticket)))
             }
             Err(error) => {
                 warn!(%error, "triage failed");
@@ -180,27 +201,61 @@ impl TriagePipeline {
         }
     }
 
-    /// Runs the fix coordinator for an eligible ticket and records the attempt.
+    /// Runs the fix step for an already triaged ticket, on request.
     ///
-    /// Never fails triage: the ticket keeps its triage status whatever
-    /// happens here, and errors are recorded as [`FixResult::Failed`].
-    async fn attempt_fix(&self, ticket: &Ticket, report: &TriageReport) {
-        let Some((coordinator, policy)) = &self.fixes else {
-            return;
+    /// Fails with [`Error::Conflict`] if the ticket has not been triaged or
+    /// the fix policy rules it out (the message says why), and
+    /// also when no fix path is configured.
+    pub async fn fix_ticket(&self, id: TicketId) -> Result<FixAttempt> {
+        let Some((_, policy)) = &self.fixes else {
+            return Err(Error::Conflict("no fix path is configured".into()));
         };
-        if !policy.eligible(ticket, report) {
-            return;
-        }
-        let result = match coordinator.run(ticket).await {
-            Ok(result) => result,
-            Err(error) => {
-                warn!(%error, "fix attempt failed");
-                FixResult::Failed {
-                    error: error.to_string(),
+        let ticket = self
+            .deps
+            .tickets
+            .get(id)
+            .await?
+            .ok_or_else(|| Error::NotFound(format!("ticket {id}")))?;
+        let report = self
+            .deps
+            .tickets
+            .latest_triage(id)
+            .await?
+            .ok_or_else(|| Error::Conflict("triage the ticket before fixing it".into()))?;
+        policy
+            .check(&ticket, &report)
+            .map_err(|reason| Error::Conflict(format!("not eligible for a code fix: {reason}")))?;
+        Ok(self.run_fix(&ticket).await)
+    }
+
+    /// Whether triaged tickets are fixed automatically (`[fixes] enabled`).
+    #[must_use]
+    pub fn fixes_enabled(&self) -> bool {
+        self.fixes
+            .as_ref()
+            .is_some_and(|(_, policy)| policy.enabled)
+    }
+
+    /// Runs the fix coordinator and records the attempt.
+    ///
+    /// Never fails: errors are recorded as [`FixResult::Failed`], and the
+    /// ticket keeps its triage status whatever happens here.
+    async fn run_fix(&self, ticket: &Ticket) -> FixAttempt {
+        let result = match &self.fixes {
+            Some((coordinator, _)) => match coordinator.run(ticket).await {
+                Ok(result) => result,
+                Err(error) => {
+                    warn!(%error, "fix attempt failed");
+                    FixResult::Failed {
+                        error: error.to_string(),
+                    }
                 }
-            }
+            },
+            None => FixResult::Failed {
+                error: "no fix path is configured".into(),
+            },
         };
-        info!(result = result.kind(), "fix attempted");
+        info!(ticket = %ticket.id, result = result.kind(), "fix attempted");
         if let Err(error) = self.dispatcher.report_fix(ticket, &result).await {
             warn!(%error, "could not report fix to tracker");
         }
@@ -212,6 +267,7 @@ impl TriagePipeline {
         if let Err(error) = self.deps.tickets.save_fix_attempt(&attempt).await {
             warn!(%error, "could not record fix attempt");
         }
+        attempt
     }
 
     /// Runs retrieval, classification and routing with no side effects.

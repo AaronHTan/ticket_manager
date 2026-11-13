@@ -12,6 +12,7 @@ bind = "127.0.0.1:8080"
 workers = 4
 queue_capacity = 1024
 log_format = "pretty"          # "pretty" | "json"
+auto_triage = true             # false: tickets wait for POST /v1/tickets/{id}/triage (demo mode)
 # api_token = "change-me"      # when set, /v1 requires `Authorization: Bearer <token>`
 
 [database]

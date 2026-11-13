@@ -30,8 +30,15 @@ struct Args {
     #[arg(long, default_value = "fixtures/history.json")]
     history: PathBuf,
     /// Incoming tickets to ingest and triage.
-    #[arg(long, default_value = "fixtures/tickets.json")]
+    #[arg(
+        long,
+        default_value = "fixtures/tickets.json",
+        conflicts_with = "no_tickets"
+    )]
     tickets: PathBuf,
+    /// Only load the knowledge base; leave the ticket list empty.
+    #[arg(long)]
+    no_tickets: bool,
     /// Delete the SQLite database first, so seeding starts from nothing.
     #[arg(long)]
     reset: bool,
@@ -56,7 +63,11 @@ async fn main() -> anyhow::Result<ExitCode> {
 
     // Read fixtures before touching the database, so a typo cannot leave it empty.
     let history = load_history(&args.history)?;
-    let tickets = load_tickets(&args.tickets)?;
+    let tickets = if args.no_tickets {
+        Vec::new()
+    } else {
+        load_tickets(&args.tickets)?
+    };
 
     if args.reset {
         reset(url, args.force)?;
@@ -71,7 +82,12 @@ async fn main() -> anyhow::Result<ExitCode> {
             "knowledge: already had entries, history not re-imported (use --reset to start over)"
         ),
     }
-    println!("knowledge entries: {}\n", report.knowledge_entries);
+    println!("knowledge entries: {}", report.knowledge_entries);
+    if report.tickets.is_empty() {
+        println!("tickets: none loaded");
+        return Ok(ExitCode::SUCCESS);
+    }
+    println!();
     println!(
         "{:<7} {:<8} {:<14} {:<14} {:<6} {:<26} title",
         "key", "", "expected", "actual", "", "fix"

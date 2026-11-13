@@ -30,6 +30,18 @@ pub mod paths {
         format!("{TICKETS}/{id}")
     }
 
+    /// `POST`: triage a ticket now (when automatic triage is off).
+    #[must_use]
+    pub fn ticket_triage(id: super::TicketId) -> String {
+        format!("{TICKETS}/{id}/triage")
+    }
+
+    /// `POST`: attempt a code fix for a triaged ticket now.
+    #[must_use]
+    pub fn ticket_fix(id: super::TicketId) -> String {
+        format!("{TICKETS}/{id}/fix")
+    }
+
     /// `POST` a human resolution for a ticket.
     #[must_use]
     pub fn ticket_resolution(id: super::TicketId) -> String {
@@ -273,6 +285,15 @@ pub struct HealthResponse {
     pub version: String,
     /// Knowledge-base size.
     pub knowledge_entries: u64,
+    /// Whether new tickets are triaged automatically.
+    #[serde(default)]
+    pub auto_triage: bool,
+    /// Whether triaged tickets can get automatic code fixes.
+    #[serde(default)]
+    pub fixes_enabled: bool,
+    /// Ids of the repositories the service may change.
+    #[serde(default)]
+    pub repositories: Vec<String>,
 }
 
 /// Body of every non-2xx response.

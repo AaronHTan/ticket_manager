@@ -27,10 +27,13 @@ const MAX_BODY_BYTES: usize = 1024 * 1024;
 /// Builds the application router.
 ///
 /// ```text
+/// GET  /                                demo UI (static, no data)
 /// GET  /healthz
 /// POST /v1/tickets                       bearer token
 /// GET  /v1/tickets?status=&client=&limit= bearer token
 /// GET  /v1/tickets/{id}                  bearer token
+/// POST /v1/tickets/{id}/triage           bearer token
+/// POST /v1/tickets/{id}/fix              bearer token
 /// POST /v1/tickets/{id}/resolution       bearer token
 /// POST /v1/knowledge/import              bearer token
 /// POST /v1/webhooks/jira/{connector}     HMAC signature
@@ -39,6 +42,8 @@ pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/tickets", post(submit_ticket).get(list_tickets))
         .route("/tickets/{id}", get(get_ticket))
+        .route("/tickets/{id}/triage", post(triage_ticket))
+        .route("/tickets/{id}/fix", post(fix_ticket))
         .route("/tickets/{id}/resolution", post(record_resolution))
         .route("/knowledge/import", post(import_history))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
@@ -47,6 +52,7 @@ pub fn router(state: AppState) -> Router {
 
     Router::new()
         .route("/healthz", get(health))
+        .merge(crate::ui::routes())
         .nest("/v1", api.merge(webhooks))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(TraceLayer::new_for_http())
@@ -58,6 +64,13 @@ async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, A
         status: "ok".into(),
         version: env!("CARGO_PKG_VERSION").into(),
         knowledge_entries: state.pipeline.knowledge_size().await?,
+        auto_triage: state.auto_triage,
+        fixes_enabled: state.pipeline.fixes_enabled(),
+        repositories: state
+            .pipeline
+            .fix_coordinator()
+            .map(|c| c.directory().ids().map(ToString::to_string).collect())
+            .unwrap_or_default(),
     }))
 }
 
@@ -99,17 +112,39 @@ async fn get_ticket(
     State(state): State<AppState>,
     Path(id): Path<TicketId>,
 ) -> Result<Json<TicketView>, ApiError> {
+    Ok(Json(ticket_view(&state, id).await?))
+}
+
+/// Runs triage now. Idempotent: an already triaged ticket returns as it is.
+async fn triage_ticket(
+    State(state): State<AppState>,
+    Path(id): Path<TicketId>,
+) -> Result<Json<TicketView>, ApiError> {
+    state.pipeline.triage_only(id).await?;
+    Ok(Json(ticket_view(&state, id).await?))
+}
+
+/// Attempts a code fix now. `409` explains why a ticket is not eligible.
+async fn fix_ticket(
+    State(state): State<AppState>,
+    Path(id): Path<TicketId>,
+) -> Result<Json<TicketView>, ApiError> {
+    state.pipeline.fix_ticket(id).await?;
+    Ok(Json(ticket_view(&state, id).await?))
+}
+
+async fn ticket_view(state: &AppState, id: TicketId) -> Result<TicketView, ApiError> {
     let (ticket, triage) = state
         .pipeline
         .ticket_with_triage(id)
         .await?
         .ok_or_else(|| Error::NotFound(format!("ticket {id}")))?;
     let fix = state.pipeline.latest_fix(id).await?;
-    Ok(Json(TicketView {
+    Ok(TicketView {
         ticket,
         triage,
         fix,
-    }))
+    })
 }
 
 async fn record_resolution(

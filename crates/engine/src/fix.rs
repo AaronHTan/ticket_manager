@@ -215,6 +215,7 @@ impl FixCoordinator {
                 summary,
             });
         };
+        let diff = truncate_diff(self.scm.diff(workspace).await?);
         self.scm.push(workspace).await?;
         let change_request = self
             .host
@@ -239,8 +240,18 @@ impl FixCoordinator {
             commit,
             change_request,
             summary,
+            diff,
         })
     }
+}
+
+/// Caps a diff at [`FixResult::MAX_DIFF_LEN`] on a line boundary.
+fn truncate_diff(diff: String) -> String {
+    if diff.len() <= FixResult::MAX_DIFF_LEN {
+        return diff;
+    }
+    let cut = diff[..FixResult::MAX_DIFF_LEN].rfind('\n').unwrap_or(0);
+    format!("{}\n... diff truncated ...\n", &diff[..cut])
 }
 
 /// How the ticket is referred to in commits: its external key, else its id.
@@ -328,10 +339,37 @@ impl FixPolicy {
     /// Whether `ticket`, triaged as `report`, should get a fix attempt.
     #[must_use]
     pub fn eligible(&self, ticket: &Ticket, report: &TriageReport) -> bool {
-        self.enabled
-            && self.kinds.contains(&ticket.kind)
-            && self.statuses.contains(&report.decision.resulting_status())
-            && report.classification.severity.severity <= self.max_severity
+        self.check(ticket, report).is_ok()
+    }
+
+    /// Like [`eligible`](Self::eligible), but says why a ticket is not eligible.
+    pub fn check(&self, ticket: &Ticket, report: &TriageReport) -> std::result::Result<(), String> {
+        let list = |items: Vec<&str>| items.join(", ");
+        if !self.enabled {
+            return Err("automatic fixes are disabled ([fixes] enabled = false)".into());
+        }
+        if !self.kinds.contains(&ticket.kind) {
+            return Err(format!(
+                "tickets of kind `{}` are not fixed in code (allowed: {})",
+                ticket.kind,
+                list(self.kinds.iter().map(|k| k.as_str()).collect())
+            ));
+        }
+        let status = report.decision.resulting_status();
+        if !self.statuses.contains(&status) {
+            return Err(format!(
+                "tickets that were {status} are not fixed in code (allowed: {})",
+                list(self.statuses.iter().map(|s| s.as_str()).collect())
+            ));
+        }
+        let severity = report.classification.severity.severity;
+        if severity > self.max_severity {
+            return Err(format!(
+                "severity {severity} is above the limit for automatic fixes ({})",
+                self.max_severity
+            ));
+        }
+        Ok(())
     }
 }
 
