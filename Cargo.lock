@@ -2183,6 +2183,7 @@ dependencies = [
 name = "ticket-api"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde",
  "serde_json",
  "ticket-core",
@@ -2242,6 +2243,7 @@ name = "ticket-jira"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
  "hex",
  "hmac",
  "reqwest",
@@ -2292,6 +2294,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "serde",
  "serde_json",
  "sqlx",
  "ticket-core",

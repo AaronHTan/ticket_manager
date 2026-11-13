@@ -7,8 +7,8 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 use ticket_client::Client;
 use ticket_client::api::{
-    Category, ClientId, HistoricalTicket, ImportHistoryRequest, RecordResolutionRequest, Severity,
-    SubmitTicketRequest, TicketId,
+    Category, ClientId, CodeContext, HistoricalTicket, ImportHistoryRequest, Link,
+    RecordResolutionRequest, RepoId, Reporter, Severity, SubmitTicketRequest, TicketId, TicketKind,
 };
 
 #[derive(Debug, Parser)]
@@ -64,6 +64,18 @@ enum Command {
         /// Reporter name or email.
         #[arg(long)]
         reporter: Option<String>,
+        /// Ticket kind (bug, incident, feature_request, task, question, other).
+        #[arg(long, default_value = "other")]
+        kind: TicketKind,
+        /// Affected component (repeatable).
+        #[arg(long = "component")]
+        components: Vec<String>,
+        /// Configured repository id the problem is in.
+        #[arg(long)]
+        repo: Option<RepoId>,
+        /// Related http(s) link, such as logs or a screenshot (repeatable).
+        #[arg(long = "link")]
+        links: Vec<String>,
     },
     /// Show a ticket and its latest triage report.
     Get {
@@ -114,16 +126,22 @@ async fn main() -> anyhow::Result<()> {
             severity,
             labels,
             reporter,
+            kind,
+            components,
+            repo,
+            links,
         } => {
-            let request = SubmitTicketRequest {
-                client: client_id,
-                title,
-                description,
-                reporter,
-                labels,
-                severity,
-                external_ref: None,
-            };
+            let mut request = SubmitTicketRequest::new(client_id, title, description);
+            request.reporter = reporter.map(Reporter::from_label).transpose()?;
+            request.kind = kind;
+            request.labels = labels;
+            request.components = components;
+            request.severity = severity;
+            request.code_context = repo.map(|repository| CodeContext {
+                repository: Some(repository),
+                ..CodeContext::default()
+            });
+            request.links = links.into_iter().map(Link::new).collect();
             print(&client.submit_ticket(&request).await?)
         }
         Command::Get { id } => print(&client.get_ticket(id).await?),
@@ -189,16 +207,40 @@ mod tests {
             "sso",
             "--label",
             "eu",
+            "--kind",
+            "bug",
+            "--component",
+            "auth",
+            "--repo",
+            "web-app",
+            "--link",
+            "https://logs.acme.test/1",
         ])
         .unwrap();
         let Command::Submit {
-            severity, labels, ..
+            severity,
+            labels,
+            kind,
+            components,
+            repo,
+            links,
+            ..
         } = cli.command
         else {
             panic!("expected submit");
         };
         assert_eq!(severity, Some(Severity::High));
         assert_eq!(labels, vec!["sso", "eu"]);
+        assert_eq!(kind, TicketKind::Bug);
+        assert_eq!(components, vec!["auth"]);
+        assert_eq!(repo.unwrap().as_str(), "web-app");
+        assert_eq!(links, vec!["https://logs.acme.test/1"]);
+        assert!(
+            Cli::try_parse_from([
+                "ticket", "submit", "--client", "acme", "--title", "x", "--repo", "../etc"
+            ])
+            .is_err()
+        );
         assert!(
             Cli::try_parse_from(["ticket", "submit", "--client", "bad id", "--title", "x"])
                 .is_err()

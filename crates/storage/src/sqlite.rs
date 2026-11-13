@@ -1,22 +1,44 @@
+use std::collections::BTreeMap;
 use std::str::FromStr;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteRow,
 };
 use sqlx::{Row, Sqlite};
 use ticket_core::ports::{KnowledgeBase, TicketRepository};
 use ticket_core::{
-    ClientId, Embedding, Error, ExternalRef, KnowledgeEntry, Resolution, Result, SimilarTicket,
-    Ticket, TicketId, TicketStatus, TriageReport, top_k,
+    ClientId, CodeContext, Embedding, Error, ExternalRef, KnowledgeEntry, Link, Reporter,
+    Resolution, Result, SimilarTicket, Ticket, TicketId, TicketStatus, TriageReport, top_k,
 };
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 const TICKET_COLUMNS: &str = "id, client_id, external_system, external_key, title, description, \
-     reporter, labels, reported_severity, status, created_at, updated_at";
+     reporter, kind, labels, reported_severity, reported_at, details, status, created_at, updated_at";
+
+/// Ticket fields that are only ever read and written as a whole, stored as
+/// one JSON column so new optional fields need no migration.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct TicketDetails {
+    #[serde(default)]
+    components: Vec<String>,
+    #[serde(default)]
+    code_context: Option<CodeContext>,
+    #[serde(default)]
+    links: Vec<Link>,
+    #[serde(default)]
+    metadata: BTreeMap<String, String>,
+}
+
+/// Reads a reporter column: JSON since migration 0002, a plain label before.
+fn decode_reporter(raw: Option<String>) -> Result<Option<Reporter>> {
+    raw.map(|raw| serde_json::from_str(&raw).or_else(|_| Reporter::from_label(raw)))
+        .transpose()
+}
 
 /// A SQLite-backed implementation of both storage ports.
 ///
@@ -102,6 +124,9 @@ fn ticket_from_row(row: &SqliteRow) -> Result<Ticket> {
     let labels: String = col(row, "labels")?;
     let reported_severity: Option<String> = col(row, "reported_severity")?;
     let status: String = col(row, "status")?;
+    let kind: String = col(row, "kind")?;
+    let details: String = col(row, "details")?;
+    let details: TicketDetails = serde_json::from_str(&details).map_err(Error::storage)?;
 
     Ok(Ticket {
         id: id.parse()?,
@@ -111,9 +136,15 @@ fn ticket_from_row(row: &SqliteRow) -> Result<Ticket> {
             .map(|(system, key)| ExternalRef { system, key }),
         title: col(row, "title")?,
         description: col(row, "description")?,
-        reporter: col(row, "reporter")?,
+        reporter: decode_reporter(col(row, "reporter")?)?,
+        kind: kind.parse()?,
         labels: serde_json::from_str(&labels).map_err(Error::storage)?,
+        components: details.components,
         reported_severity: reported_severity.as_deref().map(str::parse).transpose()?,
+        code_context: details.code_context,
+        links: details.links,
+        reported_at: col::<Option<DateTime<Utc>>>(row, "reported_at")?,
+        metadata: details.metadata,
         status: status.parse()?,
         created_at: col::<DateTime<Utc>>(row, "created_at")?,
         updated_at: col::<DateTime<Utc>>(row, "updated_at")?,
@@ -146,27 +177,43 @@ fn knowledge_from_row(row: &SqliteRow) -> Result<(KnowledgeEntry, Embedding)> {
 impl TicketRepository for SqliteStore {
     async fn insert(&self, ticket: &Ticket) -> Result<()> {
         let labels = serde_json::to_string(&ticket.labels).map_err(Error::storage)?;
+        let reporter = ticket
+            .reporter
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(Error::storage)?;
+        let details = serde_json::to_string(&TicketDetails {
+            components: ticket.components.clone(),
+            code_context: ticket.code_context.clone(),
+            links: ticket.links.clone(),
+            metadata: ticket.metadata.clone(),
+        })
+        .map_err(Error::storage)?;
         let external = ticket.external_ref.as_ref();
-        sqlx::query(
-            "INSERT INTO tickets (id, client_id, external_system, external_key, title, \
-             description, reporter, labels, reported_severity, status, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(ticket.id.to_string())
-        .bind(ticket.client.as_str())
-        .bind(external.map(|r| r.system.as_str()))
-        .bind(external.map(|r| r.key.as_str()))
-        .bind(&ticket.title)
-        .bind(&ticket.description)
-        .bind(ticket.reporter.as_deref())
-        .bind(labels)
-        .bind(ticket.reported_severity.map(|s| s.as_str()))
-        .bind(ticket.status.as_str())
-        .bind(ticket.created_at)
-        .bind(ticket.updated_at)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| map_write_error(e, || format!("ticket {}", ticket.id)))?;
+        let sql = format!(
+            "INSERT INTO tickets ({TICKET_COLUMNS}) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        );
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(ticket.id.to_string())
+            .bind(ticket.client.as_str())
+            .bind(external.map(|r| r.system.as_str()))
+            .bind(external.map(|r| r.key.as_str()))
+            .bind(&ticket.title)
+            .bind(&ticket.description)
+            .bind(reporter)
+            .bind(ticket.kind.as_str())
+            .bind(labels)
+            .bind(ticket.reported_severity.map(|s| s.as_str()))
+            .bind(ticket.reported_at)
+            .bind(details)
+            .bind(ticket.status.as_str())
+            .bind(ticket.created_at)
+            .bind(ticket.updated_at)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| map_write_error(e, || format!("ticket {}", ticket.id)))?;
         Ok(())
     }
 

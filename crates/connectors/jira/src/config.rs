@@ -31,6 +31,11 @@ pub struct JiraConfig {
     /// Without it, resolutions in Jira close tickets but teach the system nothing.
     #[serde(default)]
     pub resolution_field: Option<String>,
+    /// Field naming the affected repository, such as `customfield_10080`. Its
+    /// value (text or a single-select option) must match a configured
+    /// repository id.
+    #[serde(default)]
+    pub repository_field: Option<String>,
 }
 
 impl fmt::Debug for JiraConfig {
@@ -46,6 +51,7 @@ impl fmt::Debug for JiraConfig {
             )
             .field("resolve_transition_id", &self.resolve_transition_id)
             .field("resolution_field", &self.resolution_field)
+            .field("repository_field", &self.repository_field)
             .finish()
     }
 }

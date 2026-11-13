@@ -13,11 +13,13 @@ sqlite = ["dep:sqlx"]
 [dependencies]
 async-trait.workspace = true
 chrono.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 sqlx = { workspace = true, optional = true }
 ticket-core.workspace = true
 
 [dev-dependencies]
+sqlx.workspace = true
 tokio.workspace = true
 
 [lints]

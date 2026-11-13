@@ -319,19 +319,9 @@ mod tests {
     use super::*;
 
     fn ticket(title: &str, description: &str, reported: Option<Severity>) -> Ticket {
-        Ticket::receive(
-            NewTicket {
-                client: ClientId::new("acme").unwrap(),
-                external_ref: None,
-                title: title.into(),
-                description: description.into(),
-                reporter: None,
-                labels: vec![],
-                reported_severity: reported,
-            },
-            Utc::now(),
-        )
-        .unwrap()
+        let mut new = NewTicket::new(ClientId::new("acme").unwrap(), title, description);
+        new.reported_severity = reported;
+        Ticket::receive(new, Utc::now()).unwrap()
     }
 
     fn similar(severity: Severity, category: Option<&str>, score: f32) -> SimilarTicket {

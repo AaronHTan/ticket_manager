@@ -10,7 +10,7 @@ use ticket_client::api::{
     TicketId, TicketStatus, TicketView,
 };
 use ticket_client::{Client, ClientError};
-use ticket_core::{Category, ClientId, Resolution, RoutingDecision};
+use ticket_core::{Category, ClientId, Reporter, Resolution, RoutingDecision};
 use ticket_server::{AppConfig, build, router};
 use tokio::net::TcpListener;
 
@@ -56,15 +56,9 @@ async fn wait_for_triage(client: &Client, id: TicketId) -> TicketView {
 }
 
 fn submit(title: &str, description: &str) -> SubmitTicketRequest {
-    SubmitTicketRequest {
-        client: ClientId::new("acme").unwrap(),
-        title: title.into(),
-        description: description.into(),
-        reporter: Some("jane@acme.test".into()),
-        labels: vec![],
-        severity: None,
-        external_ref: None,
-    }
+    let mut request = SubmitTicketRequest::new(ClientId::new("acme").unwrap(), title, description);
+    request.reporter = Some(Reporter::from_label("jane@acme.test").unwrap());
+    request
 }
 
 #[tokio::test]

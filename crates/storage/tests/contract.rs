@@ -1,24 +1,44 @@
 //! Contract tests: every storage adapter must pass the same suite.
 
-use chrono::{Duration, Utc};
+use chrono::{Duration, TimeZone, Utc};
 use ticket_core::ports::{KnowledgeBase, TicketRepository};
 use ticket_core::{
-    Assignee, Category, Classification, ClientId, Embedding, Error, ExternalRef, KnowledgeEntry,
-    NewTicket, Resolution, RoutingDecision, Severity, SeverityAssessment, Ticket, TicketId,
-    TicketStatus, TriageReport,
+    Assignee, Category, Classification, ClientId, CodeContext, Embedding, Error, ExternalRef,
+    KnowledgeEntry, Link, NewTicket, RepoId, Reporter, Resolution, RoutingDecision, Severity,
+    SeverityAssessment, Ticket, TicketId, TicketKind, TicketStatus, TriageReport,
 };
 use ticket_storage::{InMemoryStore, SqliteStore};
 
 fn ticket(title: &str, external_key: Option<&str>, age_minutes: i64) -> Ticket {
-    let new = NewTicket {
-        client: ClientId::new("acme").unwrap(),
-        external_ref: external_key.map(|k| ExternalRef::new("jira-acme", k)),
-        title: title.into(),
-        description: format!("{title} - full description"),
-        reporter: Some("jane@acme.test".into()),
-        labels: vec!["prod".into(), "eu-west".into()],
-        reported_severity: Some(Severity::High),
-    };
+    let mut new = NewTicket::new(
+        ClientId::new("acme").unwrap(),
+        title,
+        format!("{title} - full description"),
+    )
+    .with_reporter(Reporter {
+        name: Some("Jane Doe".into()),
+        email: Some("jane@acme.test".into()),
+        external_id: Some("5b10ac8d82e05b22cc7d4ef5".into()),
+    })
+    .with_kind(TicketKind::Bug)
+    .with_labels(["prod", "eu-west"])
+    .with_components(["auth", "frontend"])
+    .with_reported_severity(Severity::High)
+    .with_code_context(CodeContext {
+        repository: Some(RepoId::new("web-app").unwrap()),
+        git_ref: Some("release/2.4".into()),
+        paths: vec!["src/login.rs".into()],
+        version: Some("2.4.1".into()),
+    })
+    .with_link(Link {
+        url: "https://logs.acme.test/trace/91".into(),
+        title: Some("stack trace".into()),
+    });
+    if let Some(key) = external_key {
+        new = new.with_external_ref(ExternalRef::new("jira-acme", key));
+    }
+    new.reported_at = Some(Utc.with_ymd_and_hms(2026, 11, 1, 9, 30, 0).unwrap());
+    new.metadata.insert("jira.issuetype".into(), "Bug".into());
     Ticket::receive(new, Utc::now() - Duration::minutes(age_minutes)).unwrap()
 }
 
@@ -223,4 +243,30 @@ async fn sqlite_store_satisfies_contract() {
     let store = SqliteStore::in_memory().await.unwrap();
     ticket_repository_contract(&store).await;
     knowledge_base_contract(&store).await;
+}
+
+#[tokio::test]
+async fn sqlite_reads_rows_written_before_metadata_migration() {
+    let store = SqliteStore::in_memory().await.unwrap();
+    let id = TicketId::new();
+    // The column set of migration 0001: no kind, reported_at or details, and a
+    // plain-text reporter.
+    sqlx::query(
+        "INSERT INTO tickets (id, client_id, title, description, reporter, labels, status, \
+         created_at, updated_at) VALUES (?, 'acme', 'Old ticket', '', 'Jane Doe', '[]', \
+         'received', ?, ?)",
+    )
+    .bind(id.to_string())
+    .bind(Utc::now())
+    .bind(Utc::now())
+    .execute(store.pool())
+    .await
+    .unwrap();
+
+    let ticket = store.get(id).await.unwrap().unwrap();
+    assert_eq!(ticket.reporter.unwrap().name.as_deref(), Some("Jane Doe"));
+    assert_eq!(ticket.kind, TicketKind::Other);
+    assert!(ticket.components.is_empty() && ticket.links.is_empty());
+    assert_eq!(ticket.code_context, None);
+    assert_eq!(ticket.reported_at, None);
 }

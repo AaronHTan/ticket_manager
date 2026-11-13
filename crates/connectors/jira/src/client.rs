@@ -154,6 +154,7 @@ mod tests {
             webhook_secret: None,
             resolve_transition_id: None,
             resolution_field: None,
+            repository_field: None,
         }
     }
 

@@ -1,12 +1,15 @@
 //! Parsing and authenticating Jira webhook deliveries.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
+use chrono::{DateTime, Utc};
 use hmac::{Hmac, KeyInit, Mac};
 use serde::Deserialize;
 use serde_json::Value;
 use sha2::Sha256;
-use ticket_core::{Error, ExternalRef, NewTicket, Result};
+use ticket_core::{
+    CodeContext, Error, ExternalRef, Link, NewTicket, RepoId, Reporter, Result, TicketKind,
+};
 
 use crate::adf::adf_to_text;
 use crate::config::JiraConfig;
@@ -19,7 +22,7 @@ pub const SIGNATURE_HEADER: &str = "x-hub-signature";
 #[derive(Debug, Clone, PartialEq)]
 pub enum JiraEvent {
     /// A new issue to triage.
-    Created(NewTicket),
+    Created(Box<NewTicket>),
     /// An issue was resolved in Jira.
     Resolved {
         /// The resolved issue.
@@ -52,6 +55,9 @@ struct Fields {
     description: Option<Value>,
     priority: Option<Named>,
     labels: Option<Vec<String>>,
+    issuetype: Option<Named>,
+    components: Option<Vec<Named>>,
+    created: Option<String>,
     reporter: Option<User>,
     assignee: Option<User>,
     resolution: Option<Named>,
@@ -67,6 +73,7 @@ struct Named {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct User {
+    account_id: Option<String>,
     display_name: Option<String>,
     email_address: Option<String>,
 }
@@ -74,6 +81,16 @@ struct User {
 impl User {
     fn label(self) -> Option<String> {
         self.email_address.or(self.display_name)
+    }
+
+    /// `None` if Jira sent no usable identity (for example a privacy-hidden user).
+    fn into_reporter(self) -> Option<Reporter> {
+        let reporter = Reporter {
+            name: self.display_name,
+            email: self.email_address,
+            external_id: self.account_id,
+        };
+        reporter.validate().ok().map(|()| reporter)
     }
 }
 
@@ -91,21 +108,11 @@ pub fn parse_webhook(name: &str, config: &JiraConfig, body: &[u8]) -> Result<Jir
     let fields = issue.fields;
 
     match payload.webhook_event.as_str() {
-        "jira:issue_created" => Ok(JiraEvent::Created(NewTicket {
-            client: config.client.clone(),
-            external_ref: Some(external_ref),
-            title: fields.summary.unwrap_or_default(),
-            description: fields
-                .description
-                .as_ref()
-                .map(adf_to_text)
-                .unwrap_or_default(),
-            reporter: fields.reporter.and_then(User::label),
-            labels: fields.labels.unwrap_or_default(),
-            reported_severity: fields
-                .priority
-                .and_then(|p| severity_from_priority(&p.name)),
-        })),
+        "jira:issue_created" => Ok(JiraEvent::Created(Box::new(new_ticket(
+            config,
+            external_ref,
+            fields,
+        )))),
         "jira:issue_updated" if fields.resolution.is_some() => {
             let summary = config
                 .resolution_field
@@ -122,6 +129,88 @@ pub fn parse_webhook(name: &str, config: &JiraConfig, body: &[u8]) -> Result<Jir
         other => Ok(JiraEvent::Ignored(format!(
             "event `{other}` is not handled"
         ))),
+    }
+}
+
+fn new_ticket(config: &JiraConfig, external_ref: ExternalRef, fields: Fields) -> NewTicket {
+    let browse_url = format!(
+        "{}/browse/{}",
+        config.base_url.trim_end_matches('/'),
+        external_ref.key
+    );
+    let mut metadata = BTreeMap::new();
+    if let Some(issuetype) = &fields.issuetype {
+        metadata.insert("jira.issuetype".to_owned(), issuetype.name.clone());
+    }
+    let repository = config
+        .repository_field
+        .as_ref()
+        .and_then(|field| fields.extra.get(field))
+        .and_then(option_text)
+        .and_then(|value| RepoId::new(value).ok());
+
+    NewTicket {
+        client: config.client.clone(),
+        external_ref: Some(external_ref),
+        title: fields.summary.unwrap_or_default(),
+        description: fields
+            .description
+            .as_ref()
+            .map(adf_to_text)
+            .unwrap_or_default(),
+        reporter: fields.reporter.and_then(User::into_reporter),
+        kind: fields
+            .issuetype
+            .map_or(TicketKind::Other, |t| kind_from_issue_type(&t.name)),
+        labels: fields.labels.unwrap_or_default(),
+        components: fields
+            .components
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| c.name)
+            .collect(),
+        reported_severity: fields
+            .priority
+            .and_then(|p| severity_from_priority(&p.name)),
+        code_context: repository.map(|repository| CodeContext {
+            repository: Some(repository),
+            ..CodeContext::default()
+        }),
+        links: vec![Link {
+            url: browse_url,
+            title: Some("Jira issue".into()),
+        }],
+        reported_at: fields.created.as_deref().and_then(parse_jira_time),
+        metadata,
+    }
+}
+
+/// Maps Jira's default issue type names (Software and Service Management) to a kind.
+fn kind_from_issue_type(name: &str) -> TicketKind {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "bug" | "defect" | "problem" => TicketKind::Bug,
+        "incident" => TicketKind::Incident,
+        "story" | "new feature" | "feature" | "improvement" | "epic" => TicketKind::FeatureRequest,
+        "task" | "sub-task" | "subtask" | "change" | "service request" => TicketKind::Task,
+        "question" | "support" => TicketKind::Question,
+        _ => TicketKind::Other,
+    }
+}
+
+/// Jira timestamps look like `2026-11-01T09:30:00.000+0000` (no colon in the offset).
+fn parse_jira_time(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f%z")
+        .or_else(|_| DateTime::parse_from_rfc3339(value))
+        .ok()
+        .map(|t| t.with_timezone(&Utc))
+}
+
+/// Text of a plain or single-select custom field.
+fn option_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(s) => Some(s.clone()),
+        Value::Object(o) => o.get("value").and_then(Value::as_str).map(str::to_owned),
+        _ => None,
     }
 }
 
@@ -167,6 +256,7 @@ mod tests {
             webhook_secret: Some("s3cret".into()),
             resolve_transition_id: Some("31".into()),
             resolution_field: Some("customfield_10071".into()),
+            repository_field: Some("customfield_10080".into()),
         }
     }
 
@@ -183,7 +273,14 @@ mod tests {
                     ]},
                     "priority": { "name": "Highest" },
                     "labels": ["checkout"],
-                    "reporter": { "displayName": "Jane Doe" },
+                    "issuetype": { "name": "Bug" },
+                    "components": [{ "id": "10001", "name": "checkout" }, { "name": "payments" }],
+                    "created": "2026-11-01T09:30:00.000+0100",
+                    "reporter": {
+                        "accountId": "5b10ac8d82e05b22cc7d4ef5",
+                        "displayName": "Jane Doe"
+                    },
+                    "customfield_10080": { "id": "10200", "value": "web-app" },
                     "resolution": null
                 }
             }
@@ -199,8 +296,66 @@ mod tests {
         assert_eq!(ticket.title, "Checkout returns 500");
         assert_eq!(ticket.description, "Since the 10:00 deploy");
         assert_eq!(ticket.reported_severity, Some(Severity::Critical));
-        assert_eq!(ticket.reporter.as_deref(), Some("Jane Doe"));
+        let reporter = ticket.reporter.as_ref().unwrap();
+        assert_eq!(reporter.name.as_deref(), Some("Jane Doe"));
+        assert_eq!(
+            reporter.external_id.as_deref(),
+            Some("5b10ac8d82e05b22cc7d4ef5")
+        );
+        assert_eq!(reporter.email, None);
         assert_eq!(ticket.labels, vec!["checkout"]);
+        assert_eq!(ticket.kind, TicketKind::Bug);
+        assert_eq!(ticket.components, vec!["checkout", "payments"]);
+        assert_eq!(
+            ticket.reported_at.unwrap().to_rfc3339(),
+            "2026-11-01T08:30:00+00:00"
+        );
+        assert_eq!(
+            ticket
+                .code_context
+                .as_ref()
+                .and_then(|c| c.repository.as_ref())
+                .map(RepoId::as_str),
+            Some("web-app")
+        );
+        assert_eq!(
+            ticket.links[0].url,
+            "https://acme.atlassian.net/browse/OPS-42"
+        );
+        assert_eq!(ticket.metadata["jira.issuetype"], "Bug");
+        assert!(ticket.validate().is_ok());
+    }
+
+    #[test]
+    fn minimal_issue_created_still_parses() {
+        let body = json!({
+            "webhookEvent": "jira:issue_created",
+            "issue": { "key": "OPS-7", "fields": {
+                "summary": "Question about invoices",
+                "reporter": {},
+                "customfield_10080": "not a valid id!",
+                "created": "garbage"
+            } }
+        });
+        let event = parse_webhook("jira-acme", &config(), body.to_string().as_bytes()).unwrap();
+        let JiraEvent::Created(ticket) = event else {
+            panic!("expected Created, got {event:?}");
+        };
+        assert_eq!(ticket.reporter, None);
+        assert_eq!(ticket.kind, TicketKind::Other);
+        assert_eq!(ticket.code_context, None);
+        assert_eq!(ticket.reported_at, None);
+        assert!(ticket.components.is_empty());
+    }
+
+    #[test]
+    fn issue_types_map_to_kinds() {
+        assert_eq!(kind_from_issue_type("Bug"), TicketKind::Bug);
+        assert_eq!(kind_from_issue_type("Incident"), TicketKind::Incident);
+        assert_eq!(kind_from_issue_type("Story"), TicketKind::FeatureRequest);
+        assert_eq!(kind_from_issue_type("Sub-task"), TicketKind::Task);
+        assert_eq!(kind_from_issue_type("Question"), TicketKind::Question);
+        assert_eq!(kind_from_issue_type("Spike"), TicketKind::Other);
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -5,7 +6,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{Error, Result, Severity};
+use crate::domain::code::check_len;
+use crate::{CodeContext, Error, RepoId, Reporter, Result, Severity, TicketKind};
 
 /// System-assigned ticket identifier.
 ///
@@ -217,7 +219,67 @@ impl FromStr for TicketStatus {
     }
 }
 
+/// A link attached to a ticket: a screenshot, log file, stack trace or related page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Link {
+    /// Absolute `http` or `https` URL.
+    pub url: String,
+    /// What the link points to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+impl Link {
+    /// Maximum URL length, in bytes.
+    pub const MAX_URL_LEN: usize = 2048;
+    /// Maximum title length, in bytes.
+    pub const MAX_TITLE_LEN: usize = 256;
+
+    /// Creates a link without a title.
+    pub fn new(url: impl Into<String>) -> Self {
+        Self {
+            url: url.into(),
+            title: None,
+        }
+    }
+
+    /// Accepts only absolute `http(s)` URLs without whitespace.
+    pub fn validate(&self) -> Result<()> {
+        check_len("link url", &self.url, Self::MAX_URL_LEN)?;
+        let rest = self
+            .url
+            .strip_prefix("https://")
+            .or_else(|| self.url.strip_prefix("http://"));
+        if rest.is_none_or(|r| r.is_empty())
+            || self
+                .url
+                .chars()
+                .any(|c| c.is_whitespace() || c.is_control())
+        {
+            return Err(Error::Validation(format!(
+                "link `{}` must be an absolute http(s) URL",
+                self.url
+            )));
+        }
+        if let Some(title) = &self.title {
+            check_len("link title", title, Self::MAX_TITLE_LEN)?;
+        }
+        Ok(())
+    }
+}
+
 /// A ticket as delivered by an inbound adapter, before the system assigns an id.
+///
+/// Build one with [`NewTicket::new`] and the `with_*` methods so that adding
+/// fields later does not break callers:
+///
+/// ```
+/// # use ticket_core::{ClientId, NewTicket, TicketKind};
+/// let ticket = NewTicket::new(ClientId::new("acme").unwrap(), "Login fails", "500 on submit")
+///     .with_kind(TicketKind::Bug)
+///     .with_components(["auth"]);
+/// assert!(ticket.validate().is_ok());
+/// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NewTicket {
     /// Client the ticket belongs to.
@@ -228,12 +290,30 @@ pub struct NewTicket {
     pub title: String,
     /// Free-text description. This is the main signal for triage.
     pub description: String,
-    /// Display name or email of the reporter.
-    pub reporter: Option<String>,
+    /// Who raised the ticket.
+    pub reporter: Option<Reporter>,
+    /// What sort of request this is.
+    #[serde(default)]
+    pub kind: TicketKind,
     /// Free-form labels from the upstream system.
     pub labels: Vec<String>,
+    /// Components or modules named upstream. Used to find the right repository.
+    #[serde(default)]
+    pub components: Vec<String>,
     /// Priority reported upstream. Treated as a hint, never trusted alone.
     pub reported_severity: Option<Severity>,
+    /// Hints about the code involved.
+    #[serde(default)]
+    pub code_context: Option<CodeContext>,
+    /// Attachments and related links.
+    #[serde(default)]
+    pub links: Vec<Link>,
+    /// When the ticket was created upstream.
+    #[serde(default)]
+    pub reported_at: Option<DateTime<Utc>>,
+    /// Connector-specific extras that have no field of their own.
+    #[serde(default)]
+    pub metadata: BTreeMap<String, String>,
 }
 
 impl NewTicket {
@@ -241,26 +321,159 @@ impl NewTicket {
     pub const MAX_TITLE_LEN: usize = 512;
     /// Maximum accepted description length, in bytes.
     pub const MAX_DESCRIPTION_LEN: usize = 64 * 1024;
+    /// Maximum number of labels or components.
+    pub const MAX_TAGS: usize = 64;
+    /// Maximum length of one label or component, in bytes.
+    pub const MAX_TAG_LEN: usize = 128;
+    /// Maximum number of links.
+    pub const MAX_LINKS: usize = 32;
+    /// Maximum number of metadata entries.
+    pub const MAX_METADATA_ENTRIES: usize = 32;
+    /// Maximum metadata key length, in bytes.
+    pub const MAX_METADATA_KEY_LEN: usize = 64;
+    /// Maximum metadata value length, in bytes.
+    pub const MAX_METADATA_VALUE_LEN: usize = 1024;
+
+    /// Creates a ticket with the required fields. Everything else is empty.
+    pub fn new(client: ClientId, title: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            client,
+            external_ref: None,
+            title: title.into(),
+            description: description.into(),
+            reporter: None,
+            kind: TicketKind::default(),
+            labels: Vec::new(),
+            components: Vec::new(),
+            reported_severity: None,
+            code_context: None,
+            links: Vec::new(),
+            reported_at: None,
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    /// Sets the external reference.
+    #[must_use]
+    pub fn with_external_ref(mut self, external_ref: ExternalRef) -> Self {
+        self.external_ref = Some(external_ref);
+        self
+    }
+
+    /// Sets the reporter.
+    #[must_use]
+    pub fn with_reporter(mut self, reporter: Reporter) -> Self {
+        self.reporter = Some(reporter);
+        self
+    }
+
+    /// Sets the kind.
+    #[must_use]
+    pub fn with_kind(mut self, kind: TicketKind) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    /// Sets the labels.
+    #[must_use]
+    pub fn with_labels<S: Into<String>>(mut self, labels: impl IntoIterator<Item = S>) -> Self {
+        self.labels = labels.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Sets the components.
+    #[must_use]
+    pub fn with_components<S: Into<String>>(
+        mut self,
+        components: impl IntoIterator<Item = S>,
+    ) -> Self {
+        self.components = components.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Sets the reported severity.
+    #[must_use]
+    pub fn with_reported_severity(mut self, severity: Severity) -> Self {
+        self.reported_severity = Some(severity);
+        self
+    }
+
+    /// Sets the code context.
+    #[must_use]
+    pub fn with_code_context(mut self, code_context: CodeContext) -> Self {
+        self.code_context = Some(code_context);
+        self
+    }
+
+    /// Points the ticket at a repository, keeping any other code hints.
+    #[must_use]
+    pub fn with_repository(mut self, repository: RepoId) -> Self {
+        self.code_context.get_or_insert_default().repository = Some(repository);
+        self
+    }
+
+    /// Adds a link.
+    #[must_use]
+    pub fn with_link(mut self, link: Link) -> Self {
+        self.links.push(link);
+        self
+    }
 
     /// Checks invariants that every inbound ticket must satisfy.
     pub fn validate(&self) -> Result<()> {
         if self.title.trim().is_empty() {
             return Err(Error::Validation("title must not be empty".into()));
         }
-        if self.title.len() > Self::MAX_TITLE_LEN {
+        check_len("title", &self.title, Self::MAX_TITLE_LEN)?;
+        check_len("description", &self.description, Self::MAX_DESCRIPTION_LEN)?;
+        if let Some(reporter) = &self.reporter {
+            reporter.validate()?;
+        }
+        validate_tags("labels", &self.labels)?;
+        validate_tags("components", &self.components)?;
+        if let Some(code_context) = &self.code_context {
+            code_context.validate()?;
+        }
+        if self.links.len() > Self::MAX_LINKS {
             return Err(Error::Validation(format!(
-                "title exceeds {} bytes",
-                Self::MAX_TITLE_LEN
+                "at most {} links are allowed",
+                Self::MAX_LINKS
             )));
         }
-        if self.description.len() > Self::MAX_DESCRIPTION_LEN {
+        for link in &self.links {
+            link.validate()?;
+        }
+        if self.metadata.len() > Self::MAX_METADATA_ENTRIES {
             return Err(Error::Validation(format!(
-                "description exceeds {} bytes",
-                Self::MAX_DESCRIPTION_LEN
+                "at most {} metadata entries are allowed",
+                Self::MAX_METADATA_ENTRIES
             )));
+        }
+        for (key, value) in &self.metadata {
+            if key.trim().is_empty() {
+                return Err(Error::Validation("metadata keys must not be empty".into()));
+            }
+            check_len("metadata key", key, Self::MAX_METADATA_KEY_LEN)?;
+            check_len("metadata value", value, Self::MAX_METADATA_VALUE_LEN)?;
         }
         Ok(())
     }
+}
+
+fn validate_tags(what: &str, tags: &[String]) -> Result<()> {
+    if tags.len() > NewTicket::MAX_TAGS {
+        return Err(Error::Validation(format!(
+            "at most {} {what} are allowed",
+            NewTicket::MAX_TAGS
+        )));
+    }
+    for tag in tags {
+        if tag.trim().is_empty() {
+            return Err(Error::Validation(format!("{what} must not be empty")));
+        }
+        check_len(what, tag, NewTicket::MAX_TAG_LEN)?;
+    }
+    Ok(())
 }
 
 /// A ticket owned by the handler.
@@ -276,12 +489,30 @@ pub struct Ticket {
     pub title: String,
     /// Free-text description.
     pub description: String,
-    /// Display name or email of the reporter.
-    pub reporter: Option<String>,
+    /// Who raised the ticket.
+    pub reporter: Option<Reporter>,
+    /// What sort of request this is.
+    #[serde(default)]
+    pub kind: TicketKind,
     /// Free-form labels.
     pub labels: Vec<String>,
+    /// Components or modules named upstream.
+    #[serde(default)]
+    pub components: Vec<String>,
     /// Priority reported upstream.
     pub reported_severity: Option<Severity>,
+    /// Hints about the code involved.
+    #[serde(default)]
+    pub code_context: Option<CodeContext>,
+    /// Attachments and related links.
+    #[serde(default)]
+    pub links: Vec<Link>,
+    /// When the ticket was created upstream.
+    #[serde(default)]
+    pub reported_at: Option<DateTime<Utc>>,
+    /// Connector-specific extras.
+    #[serde(default)]
+    pub metadata: BTreeMap<String, String>,
     /// Current lifecycle status.
     pub status: TicketStatus,
     /// When the ticket was received.
@@ -301,8 +532,14 @@ impl Ticket {
             title: new.title.trim().to_owned(),
             description: new.description,
             reporter: new.reporter,
+            kind: new.kind,
             labels: new.labels,
+            components: new.components,
             reported_severity: new.reported_severity,
+            code_context: new.code_context.filter(|c| !c.is_empty()),
+            links: new.links,
+            reported_at: new.reported_at,
+            metadata: new.metadata,
             status: TicketStatus::Received,
             created_at: now,
             updated_at: now,
@@ -330,15 +567,7 @@ mod tests {
     use super::*;
 
     fn new_ticket(title: &str) -> NewTicket {
-        NewTicket {
-            client: ClientId::new("acme").unwrap(),
-            external_ref: None,
-            title: title.into(),
-            description: "Something broke".into(),
-            reporter: None,
-            labels: vec![],
-            reported_severity: None,
-        }
+        NewTicket::new(ClientId::new("acme").unwrap(), title, "Something broke")
     }
 
     #[test]
@@ -373,9 +602,92 @@ mod tests {
         assert_eq!(ticket.status, TicketStatus::Received);
         assert_eq!(ticket.title, "Login fails");
         assert_eq!(ticket.created_at, now);
+        assert_eq!(ticket.kind, TicketKind::Other);
 
         assert!(Ticket::receive(new_ticket(""), now).is_err());
         assert!(Ticket::receive(new_ticket(&"x".repeat(513)), now).is_err());
+    }
+
+    #[test]
+    fn receive_carries_metadata_and_drops_empty_code_context() {
+        let reporter = Reporter::from_label("jane@acme.test").unwrap();
+        let new = new_ticket("Checkout 500")
+            .with_reporter(reporter.clone())
+            .with_kind(TicketKind::Bug)
+            .with_components(["checkout"])
+            .with_repository(RepoId::new("web-app").unwrap())
+            .with_link(Link::new("https://logs.acme.test/run/42"));
+        let ticket = Ticket::receive(new, Utc::now()).unwrap();
+        assert_eq!(ticket.reporter, Some(reporter));
+        assert_eq!(ticket.kind, TicketKind::Bug);
+        assert_eq!(ticket.components, ["checkout"]);
+        assert_eq!(
+            ticket.code_context.unwrap().repository.unwrap().as_str(),
+            "web-app"
+        );
+        assert_eq!(ticket.links.len(), 1);
+
+        let empty = new_ticket("x").with_code_context(CodeContext::default());
+        assert_eq!(
+            Ticket::receive(empty, Utc::now()).unwrap().code_context,
+            None
+        );
+    }
+
+    #[test]
+    fn validate_rejects_bad_metadata() {
+        let bad_link = new_ticket("x").with_link(Link::new("javascript:alert(1)"));
+        assert!(bad_link.validate().is_err());
+        assert!(
+            new_ticket("x")
+                .with_link(Link::new("https://"))
+                .validate()
+                .is_err()
+        );
+        assert!(
+            new_ticket("x")
+                .with_link(Link::new("https://a.test/x y"))
+                .validate()
+                .is_err()
+        );
+
+        assert!(new_ticket("x").with_components([""]).validate().is_err());
+        let many = vec!["c"; NewTicket::MAX_TAGS + 1];
+        assert!(new_ticket("x").with_components(many).validate().is_err());
+        assert!(
+            new_ticket("x")
+                .with_labels(["l".repeat(129)])
+                .validate()
+                .is_err()
+        );
+
+        let mut meta = new_ticket("x");
+        meta.metadata.insert("k".repeat(65), "v".into());
+        assert!(meta.validate().is_err());
+        let mut meta = new_ticket("x");
+        meta.metadata.insert(" ".into(), "v".into());
+        assert!(meta.validate().is_err());
+
+        let traversal = new_ticket("x").with_code_context(CodeContext {
+            paths: vec!["../../etc/passwd".into()],
+            ..CodeContext::default()
+        });
+        assert!(traversal.validate().is_err());
+    }
+
+    #[test]
+    fn new_ticket_deserialises_without_new_fields() {
+        let json = r#"{
+            "client": "acme", "external_ref": null, "title": "t", "description": "d",
+            "reporter": "jane@acme.test", "labels": [], "reported_severity": null
+        }"#;
+        let ticket: NewTicket = serde_json::from_str(json).unwrap();
+        assert_eq!(ticket.kind, TicketKind::Other);
+        assert_eq!(
+            ticket.reporter.unwrap().email.as_deref(),
+            Some("jane@acme.test")
+        );
+        assert!(ticket.links.is_empty());
     }
 
     #[test]

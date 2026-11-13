@@ -9,17 +9,9 @@
 //! use ticket_client::{Client, api::SubmitTicketRequest};
 //!
 //! let client = Client::new("http://127.0.0.1:8080")?.with_token("secret");
-//! let receipt = client
-//!     .submit_ticket(&SubmitTicketRequest {
-//!         client: "acme".parse().unwrap(),
-//!         title: "Cannot log in".into(),
-//!         description: "SSO redirect loops".into(),
-//!         reporter: None,
-//!         labels: vec![],
-//!         severity: None,
-//!         external_ref: None,
-//!     })
-//!     .await?;
+//! let request =
+//!     SubmitTicketRequest::new("acme".parse().unwrap(), "Cannot log in", "SSO redirect loops");
+//! let receipt = client.submit_ticket(&request).await?;
 //! let view = client.get_ticket(receipt.id).await?;
 //! println!("{:?}", view.ticket.status);
 //! # Ok(()) }

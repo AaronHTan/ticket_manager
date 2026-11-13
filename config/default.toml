@@ -60,3 +60,4 @@ contact = "billing-ops@example.com"
 # webhook_secret = ""
 # resolve_transition_id = "31"
 # resolution_field = "customfield_10071"
+# repository_field = "customfield_10080"   # text or select field naming a [repositories.<id>]

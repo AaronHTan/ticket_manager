@@ -137,7 +137,7 @@ async fn jira_webhook(
 
     match parse_webhook(&connector, config, &body)? {
         JiraEvent::Created(new) => {
-            let ingested = state.pipeline.ingest(new).await?;
+            let ingested = state.pipeline.ingest(*new).await?;
             if ingested.created {
                 state.enqueue(ingested.ticket.id);
             }

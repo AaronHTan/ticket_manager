@@ -32,7 +32,8 @@ In another terminal:
 cargo run -p ticket-cli -- import examples/history.json
 cargo run -p ticket-cli -- submit --client acme \
     --title "Password reset email not received" \
-    --description "User requested a password reset but the reset email never arrived."
+    --description "User requested a password reset but the reset email never arrived." \
+    --kind bug --component auth --reporter jane@acme.test
 cargo run -p ticket-cli -- get <id-from-previous-command>
 cargo run -p ticket-cli -- resolve <id> --summary "What fixed it" --automatable
 ```
@@ -52,6 +53,13 @@ The CLI binary is called `ticket`. It reads `TICKET_HANDLER_URL` and `TICKET_HAN
 
 Bearer auth is enabled by setting `server.api_token`.
 
+A submitted ticket needs only `client` and `title`. It can also carry
+`description`, `reporter` (a string, or `{name, email, external_id}`), `kind`
+(`bug`, `incident`, `feature_request`, `task`, `question`, `other`),
+`labels`, `components`, `severity`, `code_context` (`{repository, git_ref,
+paths, version}`), `links` (`[{url, title}]`), `reported_at`, `metadata`
+(string map) and `external_ref`.
+
 ## Configuration
 
 `config/default.toml` documents every option. Override any key with an
@@ -66,7 +74,9 @@ cargo run -p ticket-server
 To connect a Jira site, add a `[connectors.jira.<name>]` table (see the
 commented example in the config), then point a Jira webhook for *issue
 created* and *issue updated* at `https://<host>/v1/webhooks/jira/<name>`
-with the same secret.
+with the same secret. The Jira issue type, components, reporter, creation
+time and an optional `repository_field` custom field are mapped onto the
+ticket.
 
 ## Development
 

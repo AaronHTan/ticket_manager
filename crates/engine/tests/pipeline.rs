@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use ticket_core::ports::{TicketRepository, Tracker};
 use ticket_core::{
-    Assignee, Category, ClientId, ExternalRef, HistoricalTicket, NewTicket, Resolution, Result,
-    RoutingDecision, Severity, TicketStatus,
+    Assignee, Category, ClientId, ExternalRef, HistoricalTicket, NewTicket, Reporter, Resolution,
+    Result, RoutingDecision, Severity, TicketStatus,
 };
 use ticket_engine::{
     Dispatcher, EscalationDirectory, LogNotifier, PipelineDeps, RoutingPolicy, RuleBasedClassifier,
@@ -123,14 +123,11 @@ async fn harness() -> Harness {
 }
 
 fn new_ticket(title: &str, description: &str, jira_key: Option<&str>) -> NewTicket {
-    NewTicket {
-        client: ClientId::new("acme").unwrap(),
-        external_ref: jira_key.map(|k| ExternalRef::new("jira-acme", k)),
-        title: title.into(),
-        description: description.into(),
-        reporter: Some("jane@acme.test".into()),
-        labels: vec![],
-        reported_severity: None,
+    let new = NewTicket::new(ClientId::new("acme").unwrap(), title, description)
+        .with_reporter(Reporter::from_label("jane@acme.test").unwrap());
+    match jira_key {
+        Some(key) => new.with_external_ref(ExternalRef::new("jira-acme", key)),
+        None => new,
     }
 }
 
